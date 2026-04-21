@@ -7,7 +7,7 @@ A custom integration for [Home Assistant](https://www.home-assistant.io/) that c
 ## Features
 
 | Entity | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | Backend Connected | Binary Sensor | Whether the MythTV backend is reachable |
 | Currently Recording | Binary Sensor | `on` when any tuner is actively recording |
 | Recording Conflicts | Binary Sensor | `on` when scheduling conflicts exist |
@@ -20,10 +20,12 @@ A custom integration for [Home Assistant](https://www.home-assistant.io/) that c
 | Last Recorded | Sensor | Most recently recorded title |
 | Recording Schedules | Sensor | Number of active recording rules |
 | Total Encoders | Sensor | Number of capture cards |
-| Storage Groups | Sensor | Count + used/free space per storage group |
+| Storage Groups | Sensor | Count + free space per storage group directory |
 | Backend Hostname | Sensor | MythTV host profile name + version |
 
 All sensors expose rich **extra_state_attributes** (viewable in Developer Tools → States) with full programme details, schedules, encoder states, and storage group statistics.
+
+> **Note on storage space:** The MythTV Services API (`Myth/GetStorageGroupDirs`) reports free space per directory but does not expose total or used space. The Storage Groups sensor and dashboard card therefore show free space only.
 
 ---
 
@@ -47,10 +49,10 @@ All sensors expose rich **extra_state_attributes** (viewable in Developer Tools 
 1. Go to **Settings → Devices & Services → Add Integration**.
 2. Search for **MythTV**.
 3. Fill in:
-   - **Host** – IP address or hostname of the machine running `mythbackend`.
-   - **Port** – default `6544`.
-   - **Upcoming recordings to track** – how many upcoming entries to fetch (1–50, default 10).
-   - **Recent recordings to track** – how many recorded entries to fetch (1–50, default 10).
+   * **Host** – IP address or hostname of the machine running `mythbackend`.
+   * **Port** – default `6544`.
+   * **Upcoming recordings to track** – how many upcoming entries to fetch (1–50, default 10).
+   * **Recent recordings to track** – how many recorded entries to fetch (1–50, default 10).
 
 > **Note:** All MythTV timestamps are UTC. Home Assistant will convert them to your local timezone automatically for `timestamp` device-class sensors.
 
@@ -149,10 +151,11 @@ entities:
 ## API Endpoints Used
 
 | MythTV Endpoint | Purpose |
-|---|---|
+| --- | --- |
 | `Myth/GetHostName` | Connectivity test + hostname |
 | `Myth/GetBackendInfo` | Version info |
-| `Status/GetBackendStatus` | Storage group data |
+| `Myth/GetStorageGroupDirs` | Storage group directory free-space data |
+| `Status/GetBackendStatus` | Raw backend status (retained for future use) |
 | `Dvr/GetUpcomingList` | Upcoming & active recordings |
 | `Dvr/GetRecordedList` | Recorded library |
 | `Dvr/GetEncoderList` | Tuner/encoder states |
@@ -165,6 +168,6 @@ Data is refreshed every **60 seconds** by default.
 
 ## Requirements
 
-- Home Assistant 2023.x or later
-- MythTV v0.28 or later (v30+ recommended for full API coverage)
-- `mythbackend` must be reachable from the Home Assistant host on port 6544
+* Home Assistant 2023.x or later
+* MythTV v0.28 or later (v30+ recommended for full API coverage)
+* `mythbackend` must be reachable from the Home Assistant host on port 6544
