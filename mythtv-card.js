@@ -10,7 +10,7 @@
  * Then use card type:  custom:mythtv-card
  */
 
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 
 /* ─── Styles ──────────────────────────────────────────────────────────────── */
 const STYLES = `
@@ -29,7 +29,6 @@ const STYLES = `
     --c-dim:      rgba(255,255,255,0.04);
     --radius:     12px;
     --radius-sm:  7px;
-    /* Changed to Roboto Noto Sans stack, removed monospace */
     font-family: 'Noto Sans', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
     display: block;
   }
@@ -209,10 +208,15 @@ const STYLES = `
   .storage-top { display: flex; justify-content: space-between; margin-bottom: 5px; }
   .storage-name { font-size: 12px; color: var(--c-text); }
   .storage-nums { font-size: 11px; color: var(--c-muted); }
-  .progress-bg { height: 4px; background: var(--c-dim); border-radius: 2px; overflow: hidden; }
-  .progress-fg { height: 100%; border-radius: 2px; background: var(--c-info); transition: width 0.4s ease; }
-  .progress-fg.warn { background: var(--c-warn); }
-  .progress-fg.danger { background: var(--c-accent); }
+  .storage-dirs { font-size: 10px; color: var(--c-muted); margin-top: 3px; }
+  .storage-flag {
+    display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 3px;
+    margin-left: 5px; vertical-align: middle;
+  }
+  .storage-flag.ro {
+    background: rgba(232,164,68,0.15); color: var(--c-warn);
+    border: 1px solid rgba(232,164,68,0.3);
+  }
 
   /* ── Empty / loading ── */
   .empty { padding: 14px 0; font-size: 12px; color: var(--c-muted); font-style: italic; }
@@ -250,12 +254,6 @@ function fmtDate(utcStr) {
   } catch { return utcStr; }
 }
 
-function fmtGB(mbStr) {
-  const mb = parseInt(mbStr, 10) || 0;
-  if (mb >= 1024) return (mb / 1024).toFixed(1) + " TB";
-  return mb + " GB";
-}
-
 function stateVal(hass, entityId) {
   if (!hass || !entityId) return null;
   return hass.states[entityId]?.state ?? null;
@@ -266,12 +264,36 @@ function attrVal(hass, entityId, attr) {
   return hass.states[entityId]?.attributes?.[attr] ?? null;
 }
 
+/**
+ * Determine the coloured-bar class for a programme row.
+ *
+ * FIX: The original code checked for status codes -6 and -14 as "recording",
+ * which were wrong (they resolved to Cancelled and Failing in the corrected
+ * status table).  The correct active-recording codes are:
+ *   -8  → Recording  (tuner is writing content)
+ *   -12 → Tuning     (tuner is locking on to the signal)
+ *
+ * The rec_status attribute from sensor.py is already a human-readable string
+ * (e.g. "Recording", "Tuning", "Conflict") so we check that first.
+ * The numeric fallback is kept for any edge case where the raw code leaks
+ * through (e.g. third-party sensor overrides).
+ */
 function progStatusClass(prog) {
   const status = prog?.rec_status || prog?.Recording?.Status || "";
-  if (typeof status === "string" && status.toLowerCase().includes("recording")) return "recording";
-  if (typeof status === "number" && (status === -6 || status === -14)) return "recording";
-  if (typeof status === "string" && status.toLowerCase().includes("conflict")) return "conflict";
-  if (typeof status === "number" && status === -2) return "conflict";
+
+  if (typeof status === "string") {
+    const s = status.toLowerCase();
+    if (s === "recording" || s === "tuning") return "recording";
+    if (s === "conflict")                    return "conflict";
+    return "will-record";
+  }
+
+  // Numeric fallback — corrected codes
+  if (typeof status === "number") {
+    if (status === -8 || status === -12) return "recording";  // FIX: was -6, -14
+    if (status === -1)                   return "conflict";
+  }
+
   return "will-record";
 }
 
@@ -291,20 +313,19 @@ class MythTVCard extends HTMLElement {
     }
     this._config = {
       title: "MythTV",
-      // Sensor entity IDs — override in card config if yours differ
-      connected_entity:  config.connected_entity  || "binary_sensor.mythtv_backend_connected",
-      recording_entity:  config.recording_entity  || "binary_sensor.mythtv_currently_recording",
-      conflicts_entity:  config.conflicts_entity  || "binary_sensor.mythtv_recording_conflicts",
-      active_count_entity:  config.active_count_entity  || "sensor.mythtv_active_recordings",
-      upcoming_entity:  config.upcoming_entity  || "sensor.mythtv_upcoming_recordings",
-      next_title_entity:  config.next_title_entity  || "sensor.mythtv_next_recording",
-      next_start_entity:  config.next_start_entity  || "sensor.mythtv_next_recording_start",
-      recorded_entity:  config.recorded_entity  || "sensor.mythtv_total_recordings",
-      last_recorded_entity: config.last_recorded_entity || "sensor.mythtv_last_recorded",
-      encoders_entity:  config.encoders_entity  || "sensor.mythtv_total_encoders",
-      schedules_entity: config.schedules_entity || "sensor.mythtv_recording_schedules",
-      storage_entity:   config.storage_entity   || "sensor.mythtv_storage_groups",
-      hostname_entity:  config.hostname_entity  || "sensor.mythtv_backend_hostname",
+      connected_entity:    config.connected_entity    || "binary_sensor.mythtv_backend_connected",
+      recording_entity:    config.recording_entity    || "binary_sensor.mythtv_currently_recording",
+      conflicts_entity:    config.conflicts_entity    || "binary_sensor.mythtv_recording_conflicts",
+      active_count_entity: config.active_count_entity || "sensor.mythtv_active_recordings",
+      upcoming_entity:     config.upcoming_entity     || "sensor.mythtv_upcoming_recordings",
+      next_title_entity:   config.next_title_entity   || "sensor.mythtv_next_recording",
+      next_start_entity:   config.next_start_entity   || "sensor.mythtv_next_recording_start",
+      recorded_entity:     config.recorded_entity     || "sensor.mythtv_total_recordings",
+      last_recorded_entity:config.last_recorded_entity|| "sensor.mythtv_last_recorded",
+      encoders_entity:     config.encoders_entity     || "sensor.mythtv_total_encoders",
+      schedules_entity:    config.schedules_entity    || "sensor.mythtv_recording_schedules",
+      storage_entity:      config.storage_entity      || "sensor.mythtv_storage_groups",
+      hostname_entity:     config.hostname_entity     || "sensor.mythtv_backend_hostname",
       ...config,
     };
     this._render();
@@ -332,9 +353,6 @@ class MythTVCard extends HTMLElement {
     style.textContent = STYLES;
     root.appendChild(style);
 
-    // REMOVED: Google Fonts link. 
-    // Ensure 'Noto Sans' or 'Roboto' is available locally or via your HA theme.
-    
     if (!h) {
       const loading = document.createElement("div");
       loading.className = "card";
@@ -344,27 +362,33 @@ class MythTVCard extends HTMLElement {
     }
 
     /* ── gather data ── */
-    const isOnline = stateVal(h, c.connected_entity) === "on";
-    const isRecording = stateVal(h, c.recording_entity) === "on";
+    const isOnline     = stateVal(h, c.connected_entity) === "on";
+    const isRecording  = stateVal(h, c.recording_entity) === "on";
     const hasConflicts = stateVal(h, c.conflicts_entity) === "on";
 
-    const activeCount = parseInt(stateVal(h, c.active_count_entity) || "0", 10);
-    const upcomingTotal = parseInt(stateVal(h, c.upcoming_entity) || "0", 10);
-    const recordedTotal = parseInt(stateVal(h, c.recorded_entity) || "0", 10);
-    const schedulesCount = parseInt(stateVal(h, c.schedules_entity) || "0", 10);
-    const numEncoders = parseInt(stateVal(h, c.encoders_entity) || "0", 10);
+    const activeCount    = parseInt(stateVal(h, c.active_count_entity) || "0", 10);
+    const upcomingTotal  = parseInt(stateVal(h, c.upcoming_entity)     || "0", 10);
+    const recordedTotal  = parseInt(stateVal(h, c.recorded_entity)     || "0", 10);
+    const schedulesCount = parseInt(stateVal(h, c.schedules_entity)    || "0", 10);
+    const numEncoders    = parseInt(stateVal(h, c.encoders_entity)     || "0", 10);
 
     const hostname = stateVal(h, c.hostname_entity) || c.title;
     const nextTitle = stateVal(h, c.next_title_entity);
     const nextStart = stateVal(h, c.next_start_entity);
 
     // Rich attribute data
-    const activeRecordings   = attrVal(h, c.active_count_entity, "recordings") || [];
-    const upcomingPrograms   = attrVal(h, c.upcoming_entity, "upcoming") || [];
-    const recentRecordings   = attrVal(h, c.recorded_entity, "recent") || [];
-    const encoders           = attrVal(h, c.encoders_entity, "encoders") || [];
-    const conflictList       = attrVal(h, c.conflicts_entity, "conflict_count") || 0;
-    const storageGroups      = attrVal(h, c.storage_entity, "storage_groups") || [];
+    const activeRecordings = attrVal(h, c.active_count_entity, "recordings") || [];
+    const upcomingPrograms  = attrVal(h, c.upcoming_entity,     "upcoming")   || [];
+    const recentRecordings  = attrVal(h, c.recorded_entity,     "recent")     || [];
+    const encoders          = attrVal(h, c.encoders_entity,     "encoders")   || [];
+    const storageGroups     = attrVal(h, c.storage_entity,      "storage_groups") || [];
+
+    // FIX: The conflicts attribute is a list called "conflicts", not "conflict_count".
+    // Derive the count from the list length, or fall back to the binary sensor state.
+    const conflictList  = attrVal(h, c.conflicts_entity, "conflicts") || [];
+    const conflictCount = Array.isArray(conflictList)
+      ? conflictList.length
+      : (hasConflicts ? 1 : 0);
 
     /* ── build card ── */
     const card = document.createElement("div");
@@ -390,7 +414,7 @@ class MythTVCard extends HTMLElement {
       card.innerHTML += `
         <div class="conflict-banner">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L1 21h22L12 2zm0 3.5L20.5 19h-17L12 5.5zM11 10v4h2v-4h-2zm0 6v2h2v-2h-2z"/></svg>
-          Recording conflict${conflictList !== 1 ? "s" : ""} detected — check your schedule
+          ${conflictCount} recording conflict${conflictCount !== 1 ? "s" : ""} detected — check your schedule
         </div>`;
     }
 
@@ -472,7 +496,6 @@ class MythTVCard extends HTMLElement {
       const body = document.createElement("div");
       body.className = "section-body";
       if (upcomingPrograms.length === 0 && nextTitle) {
-        // Fallback to simple next recording display
         body.innerHTML = `
           <div class="prog-row">
             <div class="prog-status will-record"></div>
@@ -536,19 +559,33 @@ class MythTVCard extends HTMLElement {
       if (storageGroups.length === 0) {
         body.innerHTML = `<div class="empty">No storage data available</div>`;
       } else {
+        // FIX: Storage data now comes from Myth/GetStorageGroupDirs via the
+        // backend integration.  The old fields (total_gb, used_gb) no longer
+        // exist because the MythTV API does not expose total or used space
+        // through that endpoint — only free space per directory (KiBFree),
+        // aggregated into free_gb by the coordinator.
+        //
+        // We therefore display free space only, and show a read-only warning
+        // badge if the group is not writable.  The indeterminate progress bar
+        // is removed since we cannot calculate a meaningful percentage without
+        // total space.
         storageGroups.forEach(sg => {
-          const total = sg.total_gb || 0;
-          const used = sg.used_gb || 0;
-          const free = sg.free_gb || 0;
-          const pct = total > 0 ? Math.round((used / total) * 100) : 0;
-          const cls = pct > 90 ? "danger" : pct > 70 ? "warn" : "";
+          const freeGb   = typeof sg.free_gb === "number" ? sg.free_gb.toFixed(1) : "?";
+          const groupName = sg.group || "Default";
+          const host      = sg.host  ? ` · ${sg.host}` : "";
+          const writable  = sg.dir_write !== false;
+          const roFlag    = writable ? "" : `<span class="storage-flag ro">READ-ONLY</span>`;
+          const dirs      = Array.isArray(sg.directories) && sg.directories.length > 0
+            ? sg.directories.join(", ")
+            : "";
+
           body.innerHTML += `
             <div class="storage-row">
               <div class="storage-top">
-                <span class="storage-name">${sg.group || "Default"}</span>
-                <span class="storage-nums">${free.toFixed(1)} GB free / ${total.toFixed(1)} GB</span>
+                <span class="storage-name">${groupName}${roFlag}</span>
+                <span class="storage-nums">${freeGb} GB free${host}</span>
               </div>
-              <div class="progress-bg"><div class="progress-fg ${cls}" style="width:${pct}%"></div></div>
+              ${dirs ? `<div class="storage-dirs">${dirs}</div>` : ""}
             </div>`;
         });
       }
@@ -569,20 +606,18 @@ class MythTVCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return {
-      title: "MythTV",
-    };
+    return { title: "MythTV" };
   }
 }
 
 /* ─── Programme row helper ────────────────────────────────────────────────── */
 function progRow(prog, statusCls) {
-  const title = prog.title || "Unknown";
+  const title    = prog.title    || "Unknown";
   const subtitle = prog.subtitle || "";
-  const channel = (prog.channel || "").trim();
-  const start = prog.start || prog.rec_start || "";
-  const end   = prog.end   || prog.rec_end   || "";
-  const isRec = statusCls === "recording";
+  const channel  = (prog.channel || "").trim();
+  const start    = prog.start    || prog.rec_start || "";
+  const end      = prog.end      || prog.rec_end   || "";
+  const isRec      = statusCls === "recording";
   const isConflict = statusCls === "conflict";
 
   return `
@@ -591,11 +626,11 @@ function progRow(prog, statusCls) {
       <div class="prog-info">
         <div class="prog-title">
           ${title}
-          ${isRec ? `<span class="rec-badge">REC</span>` : ""}
+          ${isRec      ? `<span class="rec-badge">REC</span>`           : ""}
           ${isConflict ? `<span class="conflict-badge">CONFLICT</span>` : ""}
         </div>
         ${subtitle ? `<div class="prog-sub">${subtitle}</div>` : ""}
-        ${channel ? `<div class="prog-meta">${channel}</div>` : ""}
+        ${channel  ? `<div class="prog-meta">${channel}</div>`  : ""}
       </div>
       <div class="prog-time">
         <div>${fmtDate(start)}</div>
