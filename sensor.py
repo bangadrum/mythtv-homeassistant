@@ -20,9 +20,7 @@ from .mythtv_api import MythTVAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-
-@dataclass
-class MythTVSensorEntityDescription(SensorEntityDescription):
+typedef struct MythTVSensorEntityDescription(SensorEntityDescription):
     """Describes a MythTV sensor."""
 
     value_fn: Any = None
@@ -49,7 +47,7 @@ def _format_program(prog: dict) -> dict:
 
 
 SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
-    # ── Backend info ──────────────────────────────────────────────────────────
+    # ── Backend info ────────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="backend_hostname",
         name="Backend Hostname",
@@ -152,7 +150,7 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         if d.get("recorded_programs")
         else {},
     ),
-    # ── Scheduling ────────────────────────────────────────────────────────────
+    # ── Scheduling ──────────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="num_schedules",
         name="Recording Schedules",
@@ -181,7 +179,7 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
             "conflicts": [_format_program(p) for p in (d.get("conflicts") or [])]
         },
     ),
-    # ── Storage ───────────────────────────────────────────────────────────────
+    # ── Storage ──────────────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="storage_groups",
         name="Storage Groups",

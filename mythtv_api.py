@@ -17,14 +17,15 @@ _LOGGER = logging.getLogger(__name__)
 RECORDED_LIST_FILTER_MIN_VERSION = 32
 
 # Recording-status codes (negative = scheduler outcome, positive = rule-match reason).
-# Source: MythTV RecStatus::Type enum (libs/libmythtv/recordingtypes.h).
+# Source: MythTV wiki Services API documentation and RecStatus::Type enum
+# (libs/libmythtv/recordingtypes.h).
 # Negative codes are the ones actually returned in Upcoming/Conflict lists.
 RECORDING_STATUS: dict[int, str] = {
     # ── Negative: scheduler outcome codes ────────────────────────────────
     -17: "OtherRecording",
     -16: "OtherTuning",
-    -15: "MissedFuture",
-    -14: "Tuning",
+    -15: "Tuning",
+    -14: "Pending",
     -13: "Failed",
     -12: "TunerBusy",
     -11: "LowDiskSpace",
@@ -36,7 +37,7 @@ RECORDING_STATUS: dict[int, str] = {
     -5:  "EarlierShowing",
     -4:  "TooManyRecordings",
     -3:  "NotListed",
-    -2:  "Conflict",
+    -2:  "Recording",
     -1:  "Overlap",
     # ── Zero / positive: rule-match / scheduler-decision codes ───────────
     0:  "Unknown",
@@ -57,10 +58,14 @@ RECORDING_STATUS: dict[int, str] = {
 }
 
 # Statuses that mean "a tuner is actively occupied right now".
-# -6  CurrentRecording, -14 Tuning, -16 OtherTuning are the primary active states.
-# -12 TunerBusy is also included: the tuner is in use (e.g. by LiveTV) so it counts
-#     toward "all encoders busy" even if not making a scheduled recording.
-ACTIVE_RECORDING_STATUSES = {-6, -12, -14, -16}
+# -2  Recording (actively recording to disk)
+# -6  CurrentRecording (recording, variant)
+# -10 Cancelled (pending assignment)
+# -12 TunerBusy (tuner occupied, e.g. by LiveTV)
+# -14 Pending (awaiting tuner)
+# -15 Tuning (actively tuning)
+# -16 OtherTuning (another encoder tuning)
+ACTIVE_RECORDING_STATUSES = {-2, -6, -10, -12, -14, -15, -16}
 
 
 class MythTVConnectionError(Exception):
@@ -70,8 +75,7 @@ class MythTVConnectionError(Exception):
 class MythTVAPI:
     """Async client for the MythTV Services API."""
 
-    def __init__(
-        self,
+    def __init__(self,
         host: str,
         port: int = 6544,
         session: aiohttp.ClientSession | None = None,
@@ -88,7 +92,7 @@ class MythTVAPI:
             else None
         )
         self._owns_session = session is None
-        # Populated after a successful get_backend_version() call.
+        # Populated after a successful detect_api_version() call.
         # Used to gate v32-only parameters such as IgnoreDeleted / IgnoreLiveTV.
         self._api_version: int | None = None
 
@@ -164,6 +168,14 @@ class MythTVAPI:
 
     async def get_backend_info(self) -> dict:
         return await self._get("Myth/GetBackendInfo")
+
+    async def get_storage_group_dirs(self) -> dict:
+        """Fetch storage group directories and free-space information.
+        
+        Uses the official MythTV Services API endpoint Myth/GetStorageGroupDirs
+        as documented at https://wiki.mythtv.org/wiki/Services_API
+        """
+        return await self._get("Myth/GetStorageGroupDirs")
 
     # get_connection_info() has been removed: it required a PIN that the
     # integration never prompted for, and the result was never used anywhere.
@@ -291,7 +303,7 @@ class MythTVAPI:
             {"OnlyVisible": "true" if only_visible else "false"},
         )
 
-    # ── Helpers ───────────────────────────────────────────────────────────
+    # ── Helpers ────────────────────────────────────────────────────────────
 
     async def test_connection(self) -> bool:
         try:
@@ -304,10 +316,13 @@ class MythTVAPI:
         """Filter upcoming programmes to those currently occupying a tuner.
 
         Checks against ACTIVE_RECORDING_STATUSES which includes:
-          -6  CurrentRecording
-          -12 TunerBusy  (e.g. LiveTV)
-          -14 Tuning
-          -16 OtherTuning
+          -2  Recording (actively recording to disk)
+          -6  CurrentRecording (variant)
+          -10 Cancelled (pending)
+          -12 TunerBusy (e.g. LiveTV)
+          -14 Pending (awaiting tuner)
+          -15 Tuning (actively tuning)
+          -16 OtherTuning (another encoder tuning)
         """
         result = []
         for prog in upcoming_programs:
