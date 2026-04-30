@@ -1,7 +1,9 @@
 """Config flow for MythTV integration."""
+
 from __future__ import annotations
 
 import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
@@ -45,20 +47,25 @@ class MythTVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
 
+            # Use host:port as the stable unique ID — not the display title,
+            # which would change if the backend hostname changes.
             await self.async_set_unique_id(f"{host}:{port}")
             self._abort_if_unique_id_configured()
 
             api = MythTVAPI(host=host, port=port)
             try:
                 hostname = await api.get_hostname()
+                if not hostname:
+                    errors["base"] = "cannot_connect"
+                else:
+                    return self.async_create_entry(
+                        title=f"MythTV ({hostname})",
+                        data=user_input,
+                    )
             except MythTVConnectionError:
                 errors["base"] = "cannot_connect"
-            else:
-                await api.close()
-                return self.async_create_entry(
-                    title=f"MythTV ({hostname or host})",
-                    data=user_input,
-                )
+            except Exception:  # noqa: BLE001
+                errors["base"] = "unknown"
             finally:
                 await api.close()
 

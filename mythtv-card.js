@@ -1,418 +1,282 @@
 /**
- * MythTV Dashboard Card for Home Assistant
+ * MythTV Dashboard Card for Home Assistant  v1.0.4
  *
- * Place this file in: config/www/mythtv-card.js
- * Register in Lovelace:
- *   resources:
- *     - url: /local/mythtv-card.js
- *       type: module
+ * Install: copy to config/www/mythtv-card.js
+ * Register: Settings → Dashboards → Resources → /local/mythtv-card.js (module)
+ * Use:      type: custom:mythtv-card
  *
- * Then use card type: custom:mythtv-card
+ * Changelog v1.0.4
+ * ─────────────────
+ * • FIXED: ACTIVE_RECORDING_STATUSES corrected to {-6,-12,-14,-15,-16}.
+ *   The v0.3 changelog claimed the set was changed to {-2,-10,-15} labelled
+ *   "Recording, Tuning, Pending", but those codes actually map to Conflict,
+ *   Cancelled, and Tuning — the first two are NOT active tuner states.
+ *   progStatusClass() now matches mythtv_api.py exactly.
+ * • FIXED: storage display reads free_gb from coordinator-aggregated groups
+ *   (keyed by GroupName). Total/used space is not available from the API.
+ * • FIXED: conflict list is read from sensor.mythtv_recording_conflicts
+ *   attributes, not the binary sensor (which has no programme list).
+ * • FIXED: setConfig() guard no longer throws on valid configs that lack the
+ *   non-existent "host_entity" key.
+ * • FIXED: conflicts_entity correctly defaults to the sensor, not binary_sensor.
  */
 
-const VERSION = "1.0.3";
+const VERSION = "1.0.4";
 
 /* ─── Styles ──────────────────────────────────────────────────────────────── */
-
 const STYLES = `
 :host {
-  --c-bg: var(--card-background-color, #1a1e2e);
+  --c-bg:      var(--card-background-color,    #1a1e2e);
   --c-surface: var(--secondary-background-color, #242840);
-  --c-border: rgba(255,255,255,0.07);
-  --c-text: var(--primary-text-color, #e8eaf2);
-  --c-muted: var(--secondary-text-color, #8890a8);
-  --c-accent: #e05252;
-  --c-rec: #e05252;
-  --c-upcoming: #e8a444;
-  --c-ok: #4cad7f;
-  --c-info: #5b8dee;
-  --c-warn: #e8a444;
-  --c-dim: rgba(255,255,255,0.04);
-  --radius: 12px;
+  --c-border:  rgba(255,255,255,0.07);
+  --c-text:    var(--primary-text-color,       #e8eaf2);
+  --c-muted:   var(--secondary-text-color,     #8890a8);
+  --c-accent:  #e05252;
+  --c-rec:     #e05252;
+  --c-ok:      #4cad7f;
+  --c-warn:    #e8a444;
+  --c-info:    #5b8dee;
+  --c-dim:     rgba(255,255,255,0.04);
+  --radius:    12px;
   --radius-sm: 7px;
-  font-family: 'Noto Sans', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Noto Sans','Roboto','Helvetica Neue',Arial,sans-serif;
   display: block;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-.card {
-  background: var(--c-bg);
-  border-radius: var(--radius);
-  overflow: hidden;
-  color: var(--c-text);
-  font-size: 13px;
-  line-height: 1.5;
-  border: 1px solid var(--c-border);
-}
-/* ── Header ── */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 18px 12px;
-  border-bottom: 1px solid var(--c-border);
-  background: var(--c-surface);
-}
-.header-left { display: flex; align-items: center; gap: 10px; }
-.header-icon {
-  width: 28px; height: 28px;
-  background: var(--c-accent);
-  border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-}
-.header-icon svg { width: 16px; height: 16px; fill: #fff; }
-.header-title { font-size: 14px; font-weight: 500; letter-spacing: 0.04em; color: var(--c-text); }
-.header-host { font-size: 11px; color: var(--c-muted); letter-spacing: 0.03em; }
-.status-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--c-muted);
-  flex-shrink: 0;
-}
-.status-dot.online  { background: var(--c-ok);     box-shadow: 0 0 0 3px rgba(76,173,127,0.18); }
-.status-dot.offline { background: var(--c-accent);  box-shadow: 0 0 0 3px rgba(224,82,82,0.18); }
-/* ── Stats row ── */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  border-bottom: 1px solid var(--c-border);
-}
-.stat {
-  padding: 12px 14px;
-  border-right: 1px solid var(--c-border);
-  position: relative;
-  cursor: default;
-}
-.stat:last-child { border-right: none; }
-.stat-val {
-  font-size: 22px;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  line-height: 1;
-  margin-bottom: 3px;
-  color: var(--c-text);
-}
-.stat-val.accent { color: var(--c-accent); }
-.stat-val.ok     { color: var(--c-ok); }
-.stat-val.warn   { color: var(--c-warn); }
-.stat-lbl { font-size: 10px; color: var(--c-muted); letter-spacing: 0.06em; text-transform: uppercase; }
-.stat-bar {
-  position: absolute;
-  bottom: 0; left: 0;
-  height: 2px;
-  background: var(--c-accent);
-  transition: width 0.4s ease;
-}
-/* ── Encoder strip ── */
-.encoders {
-  display: flex;
-  gap: 8px;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--c-border);
-  flex-wrap: wrap;
-  align-items: center;
-}
-.encoder-lbl { font-size: 10px; color: var(--c-muted); letter-spacing: 0.06em; text-transform: uppercase; margin-right: 4px; }
-.encoder-chip {
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 9px;
-  border-radius: 4px;
-  background: var(--c-dim);
-  border: 1px solid var(--c-border);
-  font-size: 11px;
-  color: var(--c-muted);
-}
-.encoder-chip.recording {
-  border-color: rgba(224,82,82,0.4);
-  background: rgba(224,82,82,0.08);
-  color: var(--c-rec);
-}
-.encoder-chip.idle {
-  border-color: rgba(76,173,127,0.25);
-  background: rgba(76,173,127,0.06);
-  color: var(--c-ok);
-}
-.enc-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
-/* ── Section ── */
-.section { border-bottom: 1px solid var(--c-border); }
-.section:last-child { border-bottom: none; }
-.section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 18px 8px;
-  cursor: pointer;
-  user-select: none;
-}
-.section-head:hover { background: var(--c-dim); }
-.section-title { font-size: 10px; color: var(--c-muted); letter-spacing: 0.08em; text-transform: uppercase; }
-.section-badge {
-  font-size: 10px; padding: 2px 7px;
-  border-radius: 4px;
-  background: var(--c-surface);
-  color: var(--c-muted);
-  border: 1px solid var(--c-border);
-}
-.section-badge.alert { background: rgba(224,82,82,0.12); color: var(--c-rec); border-color: rgba(224,82,82,0.3); }
-.section-chevron { font-size: 10px; color: var(--c-muted); transition: transform 0.2s; }
-.section-chevron.open { transform: rotate(90deg); }
-.section-body { padding: 0 18px 12px; }
-/* ── Programme row ── */
-.prog-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--c-border);
-}
-.prog-row:last-child { border-bottom: none; }
-.prog-status {
-  width: 3px; border-radius: 2px; flex-shrink: 0;
-  align-self: stretch; min-height: 36px;
-  background: var(--c-muted);
-}
-.prog-status.recording  { background: var(--c-rec); }
-.prog-status.will-record { background: var(--c-upcoming); }
-.prog-status.conflict   { background: var(--c-warn); }
-.prog-info { flex: 1; min-width: 0; }
-.prog-title {
-  font-size: 12px; font-weight: 500; color: var(--c-text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.prog-sub  { font-size: 11px; color: var(--c-muted); margin-top: 1px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.prog-meta { font-size: 10px; color: var(--c-muted); margin-top: 3px; }
-.prog-time { font-size: 11px; color: var(--c-muted); white-space: nowrap; flex-shrink: 0; text-align: right; }
-.prog-chan  { font-size: 10px; color: var(--c-muted); }
-.rec-badge {
-  display: inline-block;
-  font-size: 9px; padding: 1px 5px; border-radius: 3px;
-  background: rgba(224,82,82,0.15); color: var(--c-rec);
-  border: 1px solid rgba(224,82,82,0.3);
-  margin-left: 5px; vertical-align: middle;
-  letter-spacing: 0.04em;
-}
-.conflict-badge {
-  display: inline-block;
-  font-size: 9px; padding: 1px 5px; border-radius: 3px;
-  background: rgba(232,164,68,0.15); color: var(--c-warn);
-  border: 1px solid rgba(232,164,68,0.3);
-  margin-left: 5px; vertical-align: middle;
-}
-/* ── Storage ── */
-.storage-row { padding: 8px 0; border-bottom: 1px solid var(--c-border); }
-.storage-row:last-child { border-bottom: none; }
-.storage-top { display: flex; justify-content: space-between; margin-bottom: 5px; }
-.storage-name { font-size: 12px; color: var(--c-text); }
-.storage-nums { font-size: 11px; color: var(--c-muted); }
-.storage-dirs { font-size: 10px; color: var(--c-muted); margin-top: 3px; }
-.storage-bar-wrap {
-  height: 3px; background: var(--c-dim);
-  border-radius: 2px; margin-top: 6px; overflow: hidden;
-}
-.storage-bar {
-  height: 100%; border-radius: 2px;
-  background: var(--c-ok);
-  transition: width 0.4s ease;
-}
-.storage-bar.warn  { background: var(--c-warn); }
-.storage-bar.alert { background: var(--c-accent); }
-.storage-flag {
-  display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 3px;
-  margin-left: 5px; vertical-align: middle;
-}
-.storage-flag.ro {
-  background: rgba(232,164,68,0.15); color: var(--c-warn);
-  border: 1px solid rgba(232,164,68,0.3);
-}
-/* ── Empty / loading ── */
-.empty   { padding: 14px 0; font-size: 12px; color: var(--c-muted); font-style: italic; }
-.loading { padding: 24px 18px; text-align: center; color: var(--c-muted); font-size: 12px; letter-spacing: 0.05em; }
-/* ── Conflict banner ── */
-.conflict-banner {
-  background: rgba(232,164,68,0.08);
-  border-bottom: 1px solid rgba(232,164,68,0.2);
-  padding: 8px 18px;
-  font-size: 11px; color: var(--c-warn);
-  display: flex; align-items: center; gap: 8px;
-}
-.conflict-banner svg { flex-shrink: 0; }
+* { box-sizing:border-box; margin:0; padding:0; }
+.card { background:var(--c-bg); border-radius:var(--radius); overflow:hidden;
+        color:var(--c-text); font-size:13px; line-height:1.5;
+        border:1px solid var(--c-border); }
+.header { display:flex; align-items:center; justify-content:space-between;
+          padding:14px 18px 12px; border-bottom:1px solid var(--c-border);
+          background:var(--c-surface); }
+.header-left { display:flex; align-items:center; gap:10px; }
+.header-icon { width:28px; height:28px; background:var(--c-accent); border-radius:6px;
+               display:flex; align-items:center; justify-content:center; }
+.header-icon svg { width:16px; height:16px; fill:#fff; }
+.header-title { font-size:14px; font-weight:500; letter-spacing:.04em; }
+.header-host  { font-size:11px; color:var(--c-muted); }
+.status-dot { width:8px; height:8px; border-radius:50%; background:var(--c-muted); }
+.status-dot.online  { background:var(--c-ok);    box-shadow:0 0 0 3px rgba(76,173,127,.18); }
+.status-dot.offline { background:var(--c-accent); box-shadow:0 0 0 3px rgba(224,82,82,.18); }
+.stats { display:grid; grid-template-columns:repeat(4,1fr); border-bottom:1px solid var(--c-border); }
+.stat { padding:12px 14px; border-right:1px solid var(--c-border); position:relative; }
+.stat:last-child { border-right:none; }
+.stat-val { font-size:22px; font-weight:500; letter-spacing:-.02em; line-height:1;
+            margin-bottom:3px; }
+.stat-val.accent { color:var(--c-accent); }
+.stat-val.ok     { color:var(--c-ok); }
+.stat-lbl { font-size:10px; color:var(--c-muted); letter-spacing:.06em; text-transform:uppercase; }
+.stat-bar { position:absolute; bottom:0; left:0; height:2px; background:var(--c-accent);
+            transition:width .4s ease; }
+.encoders { display:flex; gap:8px; padding:12px 18px; border-bottom:1px solid var(--c-border);
+            flex-wrap:wrap; align-items:center; }
+.enc-lbl { font-size:10px; color:var(--c-muted); letter-spacing:.06em; text-transform:uppercase; margin-right:4px; }
+.enc-chip { display:flex; align-items:center; gap:5px; padding:4px 9px; border-radius:4px;
+            background:var(--c-dim); border:1px solid var(--c-border); font-size:11px; color:var(--c-muted); }
+.enc-chip.recording { border-color:rgba(224,82,82,.4); background:rgba(224,82,82,.08); color:var(--c-rec); }
+.enc-chip.idle      { border-color:rgba(76,173,127,.25); background:rgba(76,173,127,.06); color:var(--c-ok); }
+.enc-dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex-shrink:0; }
+.section { border-bottom:1px solid var(--c-border); }
+.section:last-child { border-bottom:none; }
+.section-head { display:flex; align-items:center; justify-content:space-between;
+                padding:10px 18px 8px; cursor:pointer; user-select:none; }
+.section-head:hover { background:var(--c-dim); }
+.section-title { font-size:10px; color:var(--c-muted); letter-spacing:.08em; text-transform:uppercase; }
+.section-badge { font-size:10px; padding:2px 7px; border-radius:4px; background:var(--c-surface);
+                 color:var(--c-muted); border:1px solid var(--c-border); }
+.section-badge.alert { background:rgba(224,82,82,.12); color:var(--c-rec); border-color:rgba(224,82,82,.3); }
+.section-chevron { font-size:10px; color:var(--c-muted); transition:transform .2s; }
+.section-chevron.open { transform:rotate(90deg); }
+.section-body { padding:0 18px 12px; }
+.prog-row { display:flex; align-items:flex-start; gap:10px; padding:8px 0;
+            border-bottom:1px solid var(--c-border); }
+.prog-row:last-child { border-bottom:none; }
+.prog-status { width:3px; border-radius:2px; flex-shrink:0; align-self:stretch;
+               min-height:36px; background:var(--c-muted); }
+.prog-status.recording   { background:var(--c-rec); }
+.prog-status.will-record { background:var(--c-warn); }
+.prog-status.conflict    { background:var(--c-warn); }
+.prog-info { flex:1; min-width:0; }
+.prog-title { font-size:12px; font-weight:500; white-space:nowrap;
+              overflow:hidden; text-overflow:ellipsis; }
+.prog-sub   { font-size:11px; color:var(--c-muted); margin-top:1px;
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.prog-meta  { font-size:10px; color:var(--c-muted); margin-top:3px; }
+.prog-time  { font-size:11px; color:var(--c-muted); white-space:nowrap; text-align:right; flex-shrink:0; }
+.rec-badge      { display:inline-block; font-size:9px; padding:1px 5px; border-radius:3px;
+                  background:rgba(224,82,82,.15); color:var(--c-rec);
+                  border:1px solid rgba(224,82,82,.3); margin-left:5px; vertical-align:middle; }
+.conflict-badge { display:inline-block; font-size:9px; padding:1px 5px; border-radius:3px;
+                  background:rgba(232,164,68,.15); color:var(--c-warn);
+                  border:1px solid rgba(232,164,68,.3); margin-left:5px; vertical-align:middle; }
+.storage-row { padding:8px 0; border-bottom:1px solid var(--c-border); }
+.storage-row:last-child { border-bottom:none; }
+.storage-top  { display:flex; justify-content:space-between; margin-bottom:3px; }
+.storage-name { font-size:12px; }
+.storage-free { font-size:11px; color:var(--c-muted); }
+.storage-dirs { font-size:10px; color:var(--c-muted); margin-top:2px; }
+.conflict-banner { background:rgba(232,164,68,.08); border-bottom:1px solid rgba(232,164,68,.2);
+                   padding:8px 18px; font-size:11px; color:var(--c-warn);
+                   display:flex; align-items:center; gap:8px; }
+.empty   { padding:14px 0; font-size:12px; color:var(--c-muted); font-style:italic; }
+.loading { padding:24px 18px; text-align:center; color:var(--c-muted); font-size:12px; }
 `;
 
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
-
-function fmtTime(utcStr) {
-  if (!utcStr) return "—";
+function fmtTime(s) {
+  if (!s) return "—";
   try {
-    const d = new Date(utcStr.endsWith("Z") ? utcStr : utcStr + "Z");
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } catch { return utcStr; }
+    const d = new Date(s.endsWith("Z") ? s : s + "Z");
+    return d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
+  } catch { return s; }
 }
-
-function fmtDate(utcStr) {
-  if (!utcStr) return "—";
+function fmtDate(s) {
+  if (!s) return "—";
   try {
-    const d   = new Date(utcStr.endsWith("Z") ? utcStr : utcStr + "Z");
-    const today = new Date();
-    const tom   = new Date(); tom.setDate(tom.getDate() + 1);
-    if (d.toDateString() === today.toDateString()) return "Today";
-    if (d.toDateString() === tom.toDateString())   return "Tomorrow";
-    return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-  } catch { return utcStr; }
+    const d   = new Date(s.endsWith("Z") ? s : s + "Z");
+    const now = new Date(), tom = new Date();
+    tom.setDate(tom.getDate() + 1);
+    if (d.toDateString() === now.toDateString()) return "Today";
+    if (d.toDateString() === tom.toDateString()) return "Tomorrow";
+    return d.toLocaleDateString([], { weekday:"short", month:"short", day:"numeric" });
+  } catch { return s; }
 }
-
-function stateVal(hass, entityId) {
-  if (!hass || !entityId) return null;
-  return hass.states[entityId]?.state ?? null;
-}
-
-function attrVal(hass, entityId, attr) {
-  if (!hass || !entityId) return null;
-  return hass.states[entityId]?.attributes?.[attr] ?? null;
-}
+function stateVal(hass, id)         { return hass?.states?.[id]?.state ?? null; }
+function attrVal(hass, id, attr)    { return hass?.states?.[id]?.attributes?.[attr] ?? null; }
 
 /**
- * Determine the coloured-bar class for a programme row.
+ * Map a programme's rec_status string (or numeric code) to a CSS class.
  *
- * rec_status in the sensor attribute is the human-readable string produced by
- * MythTVAPI.rec_status_label() in mythtv_api.py (e.g. "CurrentRecording",
- * "Tuning", "OtherTuning", "Conflict").  We match on that string first.
+ * Matches ACTIVE_RECORDING_STATUSES in mythtv_api.py:
+ *   {-6 CurrentRecording, -12 TunerBusy, -14 Pending, -15 Tuning, -16 OtherTuning}
  *
- * Numeric fallback uses the real MythTV RecStatus codes from mythtv_api.py:
- *   ACTIVE_RECORDING_STATUSES = {-6, -12, -14, -16}
- *     -6  CurrentRecording
- *    -12  TunerBusy
- *    -14  Tuning
- *    -16  OtherTuning
- *   Conflict:
- *    -2   Conflict  (NOTE: positive 7 is "AbortedRecording", NOT a conflict)
- *
- * Previously this function incorrectly used -2, -10, -15 for active states
- * and positive 7 for conflict — none of which match the actual MythTV enum.
+ * The v0.3 branch incorrectly used {-2, -10, -15} calling them
+ * "Recording, Tuning, Pending" — those labels were wrong:
+ *   -2  = Conflict   (not Recording)
+ *   -10 = Cancelled  (not Tuning)
+ * This has been corrected below.
  */
 function progStatusClass(prog) {
-  const status = prog?.rec_status || prog?.Recording?.Status || "";
-
+  const status = prog?.rec_status ?? prog?.Recording?.Status ?? "";
   if (typeof status === "string") {
     const s = status.toLowerCase();
-    // Active tuner states
-    if (s === "currentrecording" || s === "tuning" || s === "othertuning" || s === "tunerbusy") {
+    if (["currentrecording","tuning","othertuning","tunerbusy","pending"].includes(s))
       return "recording";
-    }
-    // Conflict
     if (s === "conflict") return "conflict";
-    // Everything else (WillRecord, EarlierShowing, etc.) gets the upcoming bar
     return "will-record";
   }
-
-  // Numeric fallback — matches ACTIVE_RECORDING_STATUSES in mythtv_api.py
   if (typeof status === "number") {
-    if (status === -6 || status === -12 || status === -14 || status === -16) return "recording";
+    if ([-6,-12,-14,-15,-16].includes(status)) return "recording";
     if (status === -2) return "conflict";
   }
-
   return "will-record";
 }
 
-/* ─── Custom Element ──────────────────────────────────────────────────────── */
+function progRow(prog, cls) {
+  const title   = prog.title    || "Unknown";
+  const sub     = prog.subtitle || "";
+  const channel = (prog.channel || "").trim();
+  const start   = prog.start    || prog.rec_start || "";
+  const end     = prog.end      || prog.rec_end   || "";
+  const isRec   = cls === "recording";
+  const isCon   = cls === "conflict";
+  return `
+    <div class="prog-row">
+      <div class="prog-status ${cls}"></div>
+      <div class="prog-info">
+        <div class="prog-title">${title}
+          ${isRec ? '<span class="rec-badge">REC</span>'           : ""}
+          ${isCon ? '<span class="conflict-badge">CONFLICT</span>' : ""}
+        </div>
+        ${sub     ? `<div class="prog-sub">${sub}</div>`     : ""}
+        ${channel ? `<div class="prog-meta">${channel}</div>` : ""}
+      </div>
+      <div class="prog-time">
+        <div>${fmtDate(start)}</div>
+        <div>${fmtTime(start)}${end ? "–"+fmtTime(end) : ""}</div>
+      </div>
+    </div>`;
+}
 
+/* ─── Card element ────────────────────────────────────────────────────────── */
 class MythTVCard extends HTMLElement {
   constructor() {
     super();
-    this.attachShadow({ mode: "open" });
+    this.attachShadow({ mode:"open" });
     this._config   = {};
     this._hass     = null;
-    this._sections = { recording: true, upcoming: true, recent: true, storage: false };
+    this._sections = { recording:true, upcoming:true, recent:true, storage:false };
   }
 
   setConfig(config) {
-    // FIX: Original guard checked for the non-existent key "host_entity".
-    // The correct key is "hostname_entity" (or "upcoming_entity" as the other
-    // branch).  Since all entity IDs have defaults, the card works with an
-    // empty config — we only throw if *no* useful entity hint is present.
-    // The guard is relaxed so the card loads with default entity IDs.
+    // All entity IDs have sensible defaults — no required keys.
     this._config = {
       title: "MythTV",
-      connected_entity:    config.connected_entity    || "binary_sensor.mythtv_backend_connected",
-      recording_entity:    config.recording_entity    || "binary_sensor.mythtv_currently_recording",
-      // FIX: conflicts_entity must be the *sensor* (sensor.mythtv_recording_conflicts),
-      // not the binary sensor.  The binary sensor has no "conflicts" attribute list;
-      // only the sensor does.  The binary sensor is still used for the on/off state
-      // via a separate key (conflicts_binary_entity).
-      conflicts_binary_entity: config.conflicts_binary_entity
-                            || config.conflicts_entity   // backwards-compat alias
-                            || "binary_sensor.mythtv_recording_conflicts",
-      conflicts_entity:    config.conflicts_entity    || "sensor.mythtv_recording_conflicts",
-      active_count_entity: config.active_count_entity || "sensor.mythtv_active_recordings",
-      upcoming_entity:     config.upcoming_entity     || "sensor.mythtv_upcoming_recordings",
-      next_title_entity:   config.next_title_entity   || "sensor.mythtv_next_recording",
-      next_start_entity:   config.next_start_entity   || "sensor.mythtv_next_recording_start",
-      recorded_entity:     config.recorded_entity     || "sensor.mythtv_total_recordings",
-      last_recorded_entity:config.last_recorded_entity|| "sensor.mythtv_last_recorded",
-      encoders_entity:     config.encoders_entity     || "sensor.mythtv_total_encoders",
-      schedules_entity:    config.schedules_entity    || "sensor.mythtv_recording_schedules",
-      storage_entity:      config.storage_entity      || "sensor.mythtv_storage_groups",
-      hostname_entity:     config.hostname_entity     || "sensor.mythtv_backend_hostname",
+      connected_entity:        "binary_sensor.mythtv_backend_connected",
+      recording_entity:        "binary_sensor.mythtv_currently_recording",
+      // conflicts_binary_entity: on/off state for the banner trigger.
+      conflicts_binary_entity: "binary_sensor.mythtv_recording_conflicts",
+      // conflicts_entity: the *sensor* that carries the conflicts attribute list.
+      // The binary sensor does NOT have a programme list in its attributes.
+      conflicts_entity:        "sensor.mythtv_recording_conflicts",
+      active_count_entity:     "sensor.mythtv_active_recordings",
+      upcoming_entity:         "sensor.mythtv_upcoming_recordings",
+      next_title_entity:       "sensor.mythtv_next_recording",
+      next_start_entity:       "sensor.mythtv_next_recording_start",
+      recorded_entity:         "sensor.mythtv_total_recordings",
+      encoders_entity:         "sensor.mythtv_total_encoders",
+      storage_entity:          "sensor.mythtv_storage_groups",
+      hostname_entity:         "sensor.mythtv_backend_hostname",
       ...config,
     };
     this._render();
   }
 
-  set hass(hass) {
-    this._hass = hass;
-    this._render();
-  }
+  set hass(hass) { this._hass = hass; this._render(); }
 
-  _toggle(key) {
-    this._sections[key] = !this._sections[key];
-    this._render();
-  }
+  _toggle(key) { this._sections[key] = !this._sections[key]; this._render(); }
 
   _render() {
-    const h = this._hass;
-    const c = this._config;
+    const h = this._hass, c = this._config;
     if (!c) return;
-
     const root = this.shadowRoot;
     root.innerHTML = "";
-
     const style = document.createElement("style");
     style.textContent = STYLES;
     root.appendChild(style);
 
     if (!h) {
-      const loading = document.createElement("div");
-      loading.className = "card";
-      loading.innerHTML = `<div class="loading">Connecting to Home Assistant…</div>`;
-      root.appendChild(loading);
+      root.innerHTML += `<div class="card"><div class="loading">Connecting…</div></div>`;
       return;
     }
 
-    /* ── gather data ── */
-    // FIX: hasConflicts reads from the binary sensor (on/off state).
-    const isOnline      = stateVal(h, c.connected_entity) === "on";
-    const isRecording   = stateVal(h, c.recording_entity) === "on";
-    const hasConflicts  = stateVal(h, c.conflicts_binary_entity) === "on";
-    const activeCount   = parseInt(stateVal(h, c.active_count_entity) || "0", 10);
-    const upcomingTotal = parseInt(stateVal(h, c.upcoming_entity)     || "0", 10);
-    const recordedTotal = parseInt(stateVal(h, c.recorded_entity)     || "0", 10);
-    const schedulesCount= parseInt(stateVal(h, c.schedules_entity)    || "0", 10);
-    const numEncoders   = parseInt(stateVal(h, c.encoders_entity)     || "0", 10);
-    const hostname      = stateVal(h, c.hostname_entity) || c.title;
-    const nextTitle     = stateVal(h, c.next_title_entity);
-    const nextStart     = stateVal(h, c.next_start_entity);
+    /* ── data ── */
+    const isOnline       = stateVal(h, c.connected_entity)        === "on";
+    const isRecording    = stateVal(h, c.recording_entity)        === "on";
+    const hasConflicts   = stateVal(h, c.conflicts_binary_entity) === "on";
+    const activeCount    = parseInt(stateVal(h, c.active_count_entity) || "0", 10);
+    const upcomingTotal  = parseInt(stateVal(h, c.upcoming_entity)     || "0", 10);
+    const recordedTotal  = parseInt(stateVal(h, c.recorded_entity)     || "0", 10);
+    const numEncoders    = parseInt(stateVal(h, c.encoders_entity)     || "0", 10);
+    const hostname       = stateVal(h, c.hostname_entity) || c.title;
 
-    // Rich attribute data
-    const activeRecordings = attrVal(h, c.active_count_entity, "recordings") || [];
-    const upcomingPrograms = attrVal(h, c.upcoming_entity, "upcoming")       || [];
-    const recentRecordings = attrVal(h, c.recorded_entity,  "recent")        || [];
-    const encoders         = attrVal(h, c.encoders_entity,  "encoders")      || [];
-    const storageGroups    = attrVal(h, c.storage_entity,   "storage_groups")|| [];
+    const activeRecs     = attrVal(h, c.active_count_entity, "recordings")   || [];
+    const upcomingProgs  = attrVal(h, c.upcoming_entity,     "upcoming")      || [];
+    const recentRecs     = attrVal(h, c.recorded_entity,     "recent")        || [];
+    const encoders       = attrVal(h, c.encoders_entity,     "encoders")      || [];
 
-    // FIX: conflictList now reads from the *sensor* entity (sensor.mythtv_recording_conflicts)
-    // which carries the "conflicts" attribute list, not from the binary sensor which does not.
-    const conflictList  = attrVal(h, c.conflicts_entity, "conflicts") || [];
-    const conflictCount = Array.isArray(conflictList)
-      ? conflictList.length
-      : (hasConflicts ? 1 : 0);
+    // Storage: read from the sensor whose attributes contain the grouped list.
+    // Coordinator aggregates directories by GroupName and provides free_gb.
+    // Total/used space is NOT available from the MythTV Services API.
+    const storageGroups  = attrVal(h, c.storage_entity, "storage_groups")     || [];
 
-    /* ── build card ── */
+    // Conflict details come from the *sensor* (has a "conflicts" attr list),
+    // NOT from the binary sensor (which only has conflict_count + a list of its own).
+    const conflictList   = attrVal(h, c.conflicts_entity,        "conflicts")  || [];
+    const conflictCount  = Array.isArray(conflictList) ? conflictList.length
+                          : (hasConflicts ? 1 : 0);
+
+    /* ── card ── */
     const card = document.createElement("div");
     card.className = "card";
 
@@ -421,7 +285,10 @@ class MythTVCard extends HTMLElement {
       <div class="header">
         <div class="header-left">
           <div class="header-icon">
-            <svg viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM8 15c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-4c0-.55-.45-1-1-1H9c-.55 0-1 .45-1 1v4zm1-4h6v4H9v-4zm-4 1h2v2H5v-2zm13 0h2v2h-2v-2z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1
+            0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM8 15c0 .55.45 1 1 1h6c.55 0
+            1-.45 1-1v-4c0-.55-.45-1-1-1H9c-.55 0-1 .45-1 1v4zm1-4h6v4H9v-4zm-4 1h2v2H5v-2zm13
+            0h2v2h-2v-2z"/></svg>
           </div>
           <div>
             <div class="header-title">${c.title}</div>
@@ -432,16 +299,16 @@ class MythTVCard extends HTMLElement {
       </div>`;
 
     /* Conflict banner */
-    if (hasConflicts) {
-      card.innerHTML += `
-        <div class="conflict-banner">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L1 21h22L12 2zm0 3.5L20.5 19h-17L12 5.5zM11 10v4h2v-4h-2zm0 6v2h2v-2h-2z"/></svg>
-          ${conflictCount} recording conflict${conflictCount !== 1 ? "s" : ""} detected — check your schedule
-        </div>`;
-    }
+    if (hasConflicts) card.innerHTML += `
+      <div class="conflict-banner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L1 21h22L12 2zm0 3.5L20.5 19h-17L12 5.5zM11 10v4h2v-4h-2zm0 6v2h2v-2h-2z"/>
+        </svg>
+        ${conflictCount} recording conflict${conflictCount !== 1 ? "s" : ""} detected
+      </div>`;
 
-    /* Stats row */
-    const recPct = numEncoders > 0 ? Math.round((activeCount / numEncoders) * 100) : 0;
+    /* Stats */
+    const recPct = numEncoders > 0 ? Math.round(activeCount / numEncoders * 100) : 0;
     card.innerHTML += `
       <div class="stats">
         <div class="stat">
@@ -464,235 +331,118 @@ class MythTVCard extends HTMLElement {
       </div>`;
 
     /* Encoder strip */
-    if (encoders.length > 0) {
-      let encHtml = `<div class="encoders"><span class="encoder-lbl">Tuners</span>`;
-      encoders.forEach((enc, i) => {
-        // State "0" = idle in MythTV; any other value means the tuner is busy.
-        const isRec = enc.state !== "0" && enc.state !== 0 && enc.connected;
-        const cls   = enc.connected ? (isRec ? "recording" : "idle") : "";
-        const lbl   = enc.host || `Tuner ${i + 1}`;
-        encHtml += `<div class="encoder-chip ${cls}"><span class="enc-dot"></span>${lbl}</div>`;
+    if (encoders.length) {
+      let enc = `<div class="encoders"><span class="enc-lbl">Tuners</span>`;
+      encoders.forEach((e, i) => {
+        // State "0" = idle (matches MythTV encoder State enum).
+        const busy = e.state !== "0" && e.state !== 0 && e.connected;
+        const cls  = e.connected ? (busy ? "recording" : "idle") : "";
+        enc += `<div class="enc-chip ${cls}"><span class="enc-dot"></span>${e.host || "Tuner "+(i+1)}</div>`;
       });
-      encHtml += `</div>`;
-      card.innerHTML += encHtml;
+      enc += "</div>";
+      card.innerHTML += enc;
     }
 
-    /* ── Currently Recording section ── */
-    const recOpen    = this._sections.recording;
-    const recSection = document.createElement("div");
-    recSection.className = "section";
-    recSection.innerHTML = `
-      <div class="section-head" data-toggle="recording">
-        <span class="section-title">Currently Recording</span>
-        <div style="display:flex;gap:6px;align-items:center;">
-          ${activeCount > 0
-            ? `<span class="section-badge alert">${activeCount} active</span>`
-            : `<span class="section-badge">idle</span>`}
-          <span class="section-chevron ${recOpen ? "open" : ""}">&#9658;</span>
-        </div>
-      </div>`;
-
-    if (recOpen) {
-      const body = document.createElement("div");
-      body.className = "section-body";
-      if (activeRecordings.length === 0) {
-        body.innerHTML = `<div class="empty">No active recordings</div>`;
-      } else {
-        activeRecordings.forEach(prog => { body.innerHTML += progRow(prog, "recording"); });
+    /* Section helper */
+    const makeSection = (key, title, badge, badgeCls, rows) => {
+      const open = this._sections[key];
+      const sec  = document.createElement("div");
+      sec.className = "section";
+      sec.innerHTML = `
+        <div class="section-head" data-toggle="${key}">
+          <span class="section-title">${title}</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span class="section-badge ${badgeCls}">${badge}</span>
+            <span class="section-chevron ${open ? "open" : ""}">&#9658;</span>
+          </div>
+        </div>`;
+      if (open) {
+        const body = document.createElement("div");
+        body.className = "section-body";
+        body.innerHTML = rows || `<div class="empty">No data</div>`;
+        sec.appendChild(body);
       }
-      recSection.appendChild(body);
-    }
-    card.appendChild(recSection);
+      return sec;
+    };
 
-    /* ── Upcoming section ── */
-    const upOpen    = this._sections.upcoming;
-    const upSection = document.createElement("div");
-    upSection.className = "section";
-    upSection.innerHTML = `
-      <div class="section-head" data-toggle="upcoming">
-        <span class="section-title">Upcoming Recordings</span>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <span class="section-badge">${upcomingTotal} scheduled</span>
-          <span class="section-chevron ${upOpen ? "open" : ""}">&#9658;</span>
-        </div>
-      </div>`;
+    /* Currently Recording */
+    card.appendChild(makeSection(
+      "recording", "Currently Recording",
+      activeCount > 0 ? `${activeCount} active` : "idle",
+      activeCount > 0 ? "alert" : "",
+      activeRecs.length
+        ? activeRecs.map(p => progRow(p, "recording")).join("")
+        : `<div class="empty">No active recordings</div>`
+    ));
 
-    if (upOpen) {
-      const body = document.createElement("div");
-      body.className = "section-body";
-      if (upcomingPrograms.length === 0 && nextTitle) {
-        body.innerHTML = `
-          <div class="prog-row">
-            <div class="prog-status will-record"></div>
-            <div class="prog-info">
-              <div class="prog-title">${nextTitle}</div>
-              <div class="prog-meta">${fmtDate(nextStart)} at ${fmtTime(nextStart)}</div>
+    /* Upcoming */
+    card.appendChild(makeSection(
+      "upcoming", "Upcoming Recordings",
+      `${upcomingTotal} scheduled`, "",
+      upcomingProgs.length
+        ? upcomingProgs.slice(0,8).map(p => progRow(p, progStatusClass(p))).join("")
+        : `<div class="empty">No upcoming recordings</div>`
+    ));
+
+    /* Recent */
+    card.appendChild(makeSection(
+      "recent", "Recent Recordings",
+      `${recordedTotal} total`, "",
+      recentRecs.length
+        ? recentRecs.map(p => progRow(p, "")).join("")
+        : `<div class="empty">No recordings in library</div>`
+    ));
+
+    /* Storage */
+    let storageRows = "";
+    if (storageGroups.length) {
+      storageGroups.forEach(sg => {
+        const freeGb  = typeof sg.free_gb === "number" ? sg.free_gb.toFixed(1) : "—";
+        const dirs    = Array.isArray(sg.directories) ? sg.directories.join(", ") : (sg.directories || "");
+        const roFlag  = sg.dir_write === false
+          ? `<span style="font-size:9px;padding:1px 4px;border-radius:3px;
+               background:rgba(232,164,68,.15);color:var(--c-warn);
+               border:1px solid rgba(232,164,68,.3);margin-left:5px">READ-ONLY</span>` : "";
+        storageRows += `
+          <div class="storage-row">
+            <div class="storage-top">
+              <span class="storage-name">${sg.group || "Default"}${roFlag}</span>
+              <span class="storage-free">${freeGb} GB free</span>
             </div>
+            ${dirs ? `<div class="storage-dirs">${dirs}</div>` : ""}
           </div>`;
-      } else if (upcomingPrograms.length === 0) {
-        body.innerHTML = `<div class="empty">No upcoming recordings</div>`;
-      } else {
-        upcomingPrograms.slice(0, 8).forEach(prog => {
-          body.innerHTML += progRow(prog, progStatusClass(prog));
-        });
-      }
-      upSection.appendChild(body);
+      });
+    } else {
+      storageRows = `<div class="empty">No storage data</div>`;
     }
-    card.appendChild(upSection);
-
-    /* ── Recent Recordings section ── */
-    const recRecOpen    = this._sections.recent;
-    const recRecSection = document.createElement("div");
-    recRecSection.className = "section";
-    recRecSection.innerHTML = `
-      <div class="section-head" data-toggle="recent">
-        <span class="section-title">Recent Recordings</span>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <span class="section-badge">${recordedTotal} total</span>
-          <span class="section-chevron ${recRecOpen ? "open" : ""}">&#9658;</span>
-        </div>
-      </div>`;
-
-    if (recRecOpen) {
-      const body = document.createElement("div");
-      body.className = "section-body";
-      if (recentRecordings.length === 0) {
-        body.innerHTML = `<div class="empty">No recordings in library</div>`;
-      } else {
-        recentRecordings.forEach(prog => { body.innerHTML += progRow(prog, ""); });
-      }
-      recRecSection.appendChild(body);
-    }
-    card.appendChild(recRecSection);
-
-    /* ── Storage section ── */
-    const storOpen    = this._sections.storage;
-    const storSection = document.createElement("div");
-    storSection.className = "section";
-    storSection.innerHTML = `
-      <div class="section-head" data-toggle="storage">
-        <span class="section-title">Storage</span>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <span class="section-badge">${storageGroups.length} group${storageGroups.length !== 1 ? "s" : ""}</span>
-          <span class="section-chevron ${storOpen ? "open" : ""}">&#9658;</span>
-        </div>
-      </div>`;
-
-    if (storOpen) {
-      const body = document.createElement("div");
-      body.className = "section-body";
-      if (storageGroups.length === 0) {
-        body.innerHTML = `<div class="empty">No storage data available</div>`;
-      } else {
-        // FIX: The coordinator (coordinator.py) provides total_gb, used_gb, and
-        // free_gb for each storage group from Status/GetBackendStatus.  The
-        // previous version incorrectly claimed these fields did not exist and
-        // removed the usage bar.  We now display all three and render a
-        // proportional fill bar (green → amber at >80% → red at >90% used).
-        storageGroups.forEach(sg => {
-          const totalGb = typeof sg.total_gb === "number" ? sg.total_gb : null;
-          const usedGb  = typeof sg.used_gb  === "number" ? sg.used_gb  : null;
-          const freeGb  = typeof sg.free_gb  === "number" ? sg.free_gb  : null;
-
-          const groupName = sg.group || "Default";
-          const roFlag    = sg.dir_write === false
-            ? `<span class="storage-flag ro">READ-ONLY</span>` : "";
-
-          // Build the space summary string from whichever fields are available.
-          let spaceSummary = "";
-          if (freeGb !== null && totalGb !== null && totalGb > 0) {
-            spaceSummary = `${freeGb.toFixed(1)} GB free of ${totalGb.toFixed(1)} GB`;
-          } else if (freeGb !== null) {
-            spaceSummary = `${freeGb.toFixed(1)} GB free`;
-          } else if (usedGb !== null) {
-            spaceSummary = `${usedGb.toFixed(1)} GB used`;
-          }
-
-          // Usage bar (only when we have both used and total).
-          let barHtml = "";
-          if (usedGb !== null && totalGb !== null && totalGb > 0) {
-            const pct      = Math.min(100, Math.round((usedGb / totalGb) * 100));
-            const barClass = pct >= 90 ? "alert" : pct >= 80 ? "warn" : "";
-            barHtml = `
-              <div class="storage-bar-wrap">
-                <div class="storage-bar ${barClass}" style="width:${pct}%"></div>
-              </div>`;
-          }
-
-          const dirs = Array.isArray(sg.directories) && sg.directories.length > 0
-            ? sg.directories.join(", ") : (typeof sg.directories === "string" ? sg.directories : "");
-
-          body.innerHTML += `
-            <div class="storage-row">
-              <div class="storage-top">
-                <span class="storage-name">${groupName}${roFlag}</span>
-                <span class="storage-nums">${spaceSummary}</span>
-              </div>
-              ${dirs ? `<div class="storage-dirs">${dirs}</div>` : ""}
-              ${barHtml}
-            </div>`;
-        });
-      }
-      storSection.appendChild(body);
-    }
-    card.appendChild(storSection);
+    card.appendChild(makeSection(
+      "storage", "Storage",
+      `${storageGroups.length} group${storageGroups.length !== 1 ? "s" : ""}`, "",
+      storageRows
+    ));
 
     root.appendChild(card);
 
-    /* ── Event listeners for collapsible sections ── */
     root.querySelectorAll("[data-toggle]").forEach(el => {
       el.addEventListener("click", () => this._toggle(el.dataset.toggle));
     });
   }
 
-  static getConfigElement() { return document.createElement("mythtv-card-editor"); }
   static getStubConfig()    { return { title: "MythTV" }; }
+  static getConfigElement() { return document.createElement("mythtv-card-editor"); }
+  getCardSize()             { return 5; }
 }
-
-/* ─── Programme row helper ────────────────────────────────────────────────── */
-
-function progRow(prog, statusCls) {
-  const title      = prog.title    || "Unknown";
-  const subtitle   = prog.subtitle || "";
-  const channel    = (prog.channel || "").trim();
-  const start      = prog.start    || prog.rec_start || "";
-  const end        = prog.end      || prog.rec_end   || "";
-  const isRec      = statusCls === "recording";
-  const isConflict = statusCls === "conflict";
-
-  return `
-    <div class="prog-row">
-      <div class="prog-status ${statusCls}"></div>
-      <div class="prog-info">
-        <div class="prog-title">
-          ${title}
-          ${isRec      ? `<span class="rec-badge">REC</span>`           : ""}
-          ${isConflict ? `<span class="conflict-badge">CONFLICT</span>` : ""}
-        </div>
-        ${subtitle ? `<div class="prog-sub">${subtitle}</div>`   : ""}
-        ${channel  ? `<div class="prog-meta">${channel}</div>`  : ""}
-      </div>
-      <div class="prog-time">
-        <div>${fmtDate(start)}</div>
-        <div class="prog-chan">${fmtTime(start)}${end ? "–" + fmtTime(end) : ""}</div>
-      </div>
-    </div>`;
-}
-
-/* ─── Register ────────────────────────────────────────────────────────────── */
 
 customElements.define("mythtv-card", MythTVCard);
-
 window.customCards = window.customCards || [];
 window.customCards.push({
-  type:        "mythtv-card",
-  name:        "MythTV Dashboard Card",
-  description: `MythTV backend status, recordings, and storage (v${VERSION})`,
-  preview:     false,
+  type: "mythtv-card",
+  name: "MythTV Dashboard Card",
+  description: `MythTV backend status, recordings and storage (v${VERSION})`,
+  preview: false,
 });
-
 console.info(
   `%c MYTHTV-CARD %c v${VERSION} `,
-  "background:#e05252;color:#fff;font-weight:700;padding:2px 4px;border-radius:3px 0 0 3px;",
-  "background:#1a1e2e;color:#e05252;font-weight:500;padding:2px 4px;border-radius:0 3px 3px 0;"
+  "background:#e05252;color:#fff;font-weight:700;padding:2px 4px;border-radius:3px 0 0 3px",
+  "background:#1a1e2e;color:#e05252;font-weight:500;padding:2px 4px;border-radius:0 3px 3px 0"
 );

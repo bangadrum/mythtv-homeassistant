@@ -19,17 +19,26 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import COORDINATOR, DOMAIN
 from .coordinator import MythTVDataUpdateCoordinator
-from .mythtv_api import MythTVAPI
 
 _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
 class MythTVBinarySensorDescription(BinarySensorEntityDescription):
-    """Describes a MythTV binary sensor."""
-
     is_on_fn: Any = None
     extra_attrs_fn: Any = None
+
+
+def _fmt_conflict(prog: dict) -> dict:
+    rec = prog.get("Recording", {})
+    ch  = prog.get("Channel", {})
+    return {
+        "title":    prog.get("Title", ""),
+        "subtitle": prog.get("SubTitle", ""),
+        "channel":  (ch.get("ChanNum", "") + " " + ch.get("CallSign", "")).strip(),
+        "start":    prog.get("StartTime") or rec.get("StartTs"),
+        "end":      prog.get("EndTime")   or rec.get("EndTs"),
+    }
 
 
 BINARY_SENSOR_DESCRIPTIONS: list[MythTVBinarySensorDescription] = [
@@ -38,10 +47,8 @@ BINARY_SENSOR_DESCRIPTIONS: list[MythTVBinarySensorDescription] = [
         name="Backend Connected",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
-        is_on_fn=lambda d: d is not None and bool(d.get("hostname")),
-        extra_attrs_fn=lambda d: {
-            "host": d.get("hostname", "") if d else "",
-        },
+        is_on_fn=lambda d: bool(d and d.get("hostname")),
+        extra_attrs_fn=lambda d: {"host": d.get("hostname", "") if d else ""},
     ),
     MythTVBinarySensorDescription(
         key="is_recording",
@@ -54,9 +61,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[MythTVBinarySensorDescription] = [
             "titles": [
                 p.get("Title", "")
                 for p in (d.get("currently_recording") or [])
-            ]
-            if d
-            else [],
+            ] if d else [],
         },
     ),
     MythTVBinarySensorDescription(
@@ -66,22 +71,10 @@ BINARY_SENSOR_DESCRIPTIONS: list[MythTVBinarySensorDescription] = [
         icon="mdi:calendar-alert",
         is_on_fn=lambda d: bool(d and d.get("num_conflicts", 0) > 0),
         extra_attrs_fn=lambda d: {
-            # "conflicts" is a list — this is what the dashboard card reads
-            # to display individual conflict details and derive the count.
-            "conflicts": [
-                {
-                    "title": p.get("Title", ""),
-                    "subtitle": p.get("SubTitle", ""),
-                    "channel": (p.get("Channel", {}) or {}).get("CallSign", ""),
-                    "start": p.get("StartTime", ""),
-                }
-                for p in (d.get("conflicts") or [])
-            ]
-            if d
-            else [],
-            # "conflict_count" retained for backwards compatibility with
-            # any automations that reference it directly.
             "conflict_count": d.get("num_conflicts", 0) if d else 0,
+            "conflicts": [
+                _fmt_conflict(p) for p in (d.get("conflicts") or [])
+            ] if d else [],
         },
     ),
     MythTVBinarySensorDescription(
@@ -89,14 +82,16 @@ BINARY_SENSOR_DESCRIPTIONS: list[MythTVBinarySensorDescription] = [
         name="All Encoders Busy",
         device_class=BinarySensorDeviceClass.OCCUPANCY,
         icon="mdi:video-input-component",
+        # True only when there is at least one encoder AND none are idle.
+        # State "0" = idle in the MythTV encoder State enum.
         is_on_fn=lambda d: bool(
             d
             and d.get("num_encoders", 0) > 0
             and d.get("num_idle_encoders", 0) == 0
         ),
         extra_attrs_fn=lambda d: {
-            "total_encoders": d.get("num_encoders", 0) if d else 0,
-            "idle_encoders": d.get("num_idle_encoders", 0) if d else 0,
+            "total_encoders": d.get("num_encoders", 0)      if d else 0,
+            "idle_encoders":  d.get("num_idle_encoders", 0) if d else 0,
         },
     ),
 ]
@@ -107,10 +102,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: MythTVDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        COORDINATOR
-    ]
-
+    coordinator: MythTVDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
     async_add_entities(
         MythTVBinarySensor(coordinator, desc) for desc in BINARY_SENSOR_DESCRIPTIONS
     )
@@ -146,7 +138,7 @@ class MythTVBinarySensor(
             try:
                 return self.entity_description.is_on_fn(self.coordinator.data)
             except Exception as err:
-                _LOGGER.debug("Error in is_on for %s: %s", self.entity_description.key, err)
+                _LOGGER.debug("is_on error for %s: %s", self.entity_description.key, err)
         return None
 
     @property
@@ -155,5 +147,5 @@ class MythTVBinarySensor(
             try:
                 return self.entity_description.extra_attrs_fn(self.coordinator.data) or {}
             except Exception as err:
-                _LOGGER.debug("Error in attrs for %s: %s", self.entity_description.key, err)
+                _LOGGER.debug("attr error for %s: %s", self.entity_description.key, err)
         return {}

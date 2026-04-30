@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
@@ -20,47 +19,40 @@ from .mythtv_api import MythTVAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-typedef struct MythTVSensorEntityDescription(SensorEntityDescription):
-    """Describes a MythTV sensor."""
 
+@dataclass
+class MythTVSensorEntityDescription(SensorEntityDescription):
     value_fn: Any = None
     extra_attrs_fn: Any = None
 
 
-def _format_program(prog: dict) -> dict:
-    """Convert a programme dict to a clean, serialisable summary."""
+def _fmt_prog(prog: dict) -> dict:
     rec = prog.get("Recording", {})
-    ch = prog.get("Channel", {})
-    start_ts = prog.get("StartTime") or rec.get("StartTs")
-    end_ts = prog.get("EndTime") or rec.get("EndTs")
+    ch  = prog.get("Channel", {})
     return {
-        "title": prog.get("Title", ""),
-        "subtitle": prog.get("SubTitle", ""),
-        "channel": ch.get("ChanNum", "") + " " + ch.get("CallSign", ""),
-        "start": start_ts,
-        "end": end_ts,
-        "category": prog.get("Category", ""),
+        "title":      prog.get("Title", ""),
+        "subtitle":   prog.get("SubTitle", ""),
+        "channel":    (ch.get("ChanNum", "") + " " + ch.get("CallSign", "")).strip(),
+        "start":      prog.get("StartTime") or rec.get("StartTs"),
+        "end":        prog.get("EndTime")   or rec.get("EndTs"),
+        "category":   prog.get("Category", ""),
         "rec_status": MythTVAPI.rec_status_label(rec.get("Status", 0)),
-        "rec_group": rec.get("RecGroup", ""),
+        "rec_group":  rec.get("RecGroup", ""),
         "description": prog.get("Description", "")[:200],
     }
 
 
 SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
-    # ── Backend info ────────────────────────────────────────────────────────
+    # ── Backend ────────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="backend_hostname",
         name="Backend Hostname",
         icon="mdi:server",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: d.get("hostname"),
-        # backend_version is now a flat string extracted in the coordinator,
-        # so we no longer need to drill into the nested backend_info dict here.
-        extra_attrs_fn=lambda d: {
-            "version": d.get("backend_version", ""),
-        },
+        extra_attrs_fn=lambda d: {"version": d.get("backend_version", "")},
     ),
-    # ── Encoder / tuner sensors ───────────────────────────────────────────────
+    # ── Encoders ───────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="num_encoders",
         name="Total Encoders",
@@ -70,10 +62,11 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         extra_attrs_fn=lambda d: {
             "encoders": [
                 {
-                    "id": e.get("Id"),
-                    "host": e.get("HostName"),
-                    "state": e.get("State"),
-                    "connected": e.get("Connected"),
+                    "id":           e.get("Id"),
+                    "host":         e.get("HostName"),
+                    # State "0" = idle; any other value = busy.
+                    "state":        e.get("State"),
+                    "connected":    e.get("Connected"),
                     "sleep_status": e.get("SleepStatus"),
                 }
                 for e in (d.get("encoders") or [])
@@ -87,10 +80,10 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         native_unit_of_measurement="recordings",
         value_fn=lambda d: d.get("num_recording"),
         extra_attrs_fn=lambda d: {
-            "recordings": [_format_program(p) for p in (d.get("currently_recording") or [])]
+            "recordings": [_fmt_prog(p) for p in (d.get("currently_recording") or [])]
         },
     ),
-    # ── Upcoming recordings ───────────────────────────────────────────────────
+    # ── Upcoming ───────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="upcoming_recordings_count",
         name="Upcoming Recordings",
@@ -98,22 +91,19 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         native_unit_of_measurement="recordings",
         value_fn=lambda d: d.get("upcoming_total"),
         extra_attrs_fn=lambda d: {
-            "next_recording": _format_program(d["upcoming_programs"][0])
-            if d.get("upcoming_programs")
-            else None,
-            "upcoming": [_format_program(p) for p in (d.get("upcoming_programs") or [])],
+            "next_recording": _fmt_prog(d["upcoming_programs"][0])
+                if d.get("upcoming_programs") else None,
+            "upcoming": [_fmt_prog(p) for p in (d.get("upcoming_programs") or [])],
         },
     ),
     MythTVSensorEntityDescription(
         key="next_recording_title",
         name="Next Recording",
         icon="mdi:television-play",
-        value_fn=lambda d: (d["upcoming_programs"][0].get("Title"))
-        if d.get("upcoming_programs")
-        else None,
-        extra_attrs_fn=lambda d: _format_program(d["upcoming_programs"][0])
-        if d.get("upcoming_programs")
-        else {},
+        value_fn=lambda d: d["upcoming_programs"][0].get("Title")
+            if d.get("upcoming_programs") else None,
+        extra_attrs_fn=lambda d: _fmt_prog(d["upcoming_programs"][0])
+            if d.get("upcoming_programs") else {},
     ),
     MythTVSensorEntityDescription(
         key="next_recording_start",
@@ -123,12 +113,10 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         value_fn=lambda d: MythTVAPI.parse_utc(
             (d["upcoming_programs"][0].get("Recording", {}) or {}).get("StartTs")
             or d["upcoming_programs"][0].get("StartTime")
-        )
-        if d.get("upcoming_programs")
-        else None,
+        ) if d.get("upcoming_programs") else None,
         extra_attrs_fn=lambda d: {},
     ),
-    # ── Recorded library ──────────────────────────────────────────────────────
+    # ── Recorded library ───────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="recorded_total",
         name="Total Recordings",
@@ -136,21 +124,19 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         native_unit_of_measurement="recordings",
         value_fn=lambda d: d.get("recorded_total"),
         extra_attrs_fn=lambda d: {
-            "recent": [_format_program(p) for p in (d.get("recorded_programs") or [])[:5]]
+            "recent": [_fmt_prog(p) for p in (d.get("recorded_programs") or [])[:5]]
         },
     ),
     MythTVSensorEntityDescription(
         key="last_recorded_title",
         name="Last Recorded",
         icon="mdi:television-classic",
-        value_fn=lambda d: (d["recorded_programs"][0].get("Title"))
-        if d.get("recorded_programs")
-        else None,
-        extra_attrs_fn=lambda d: _format_program(d["recorded_programs"][0])
-        if d.get("recorded_programs")
-        else {},
+        value_fn=lambda d: d["recorded_programs"][0].get("Title")
+            if d.get("recorded_programs") else None,
+        extra_attrs_fn=lambda d: _fmt_prog(d["recorded_programs"][0])
+            if d.get("recorded_programs") else {},
     ),
-    # ── Scheduling ──────────────────────────────────────────────────────────
+    # ── Scheduling ─────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="num_schedules",
         name="Recording Schedules",
@@ -160,8 +146,8 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         extra_attrs_fn=lambda d: {
             "schedules": [
                 {
-                    "title": s.get("Title", ""),
-                    "type": s.get("Type", ""),
+                    "title":   s.get("Title", ""),
+                    "type":    s.get("Type", ""),
                     "channel": s.get("ChanId", ""),
                     "enabled": s.get("Inactive", "false") != "true",
                 }
@@ -176,10 +162,10 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         native_unit_of_measurement="conflicts",
         value_fn=lambda d: d.get("num_conflicts"),
         extra_attrs_fn=lambda d: {
-            "conflicts": [_format_program(p) for p in (d.get("conflicts") or [])]
+            "conflicts": [_fmt_prog(p) for p in (d.get("conflicts") or [])]
         },
     ),
-    # ── Storage ──────────────────────────────────────────────────────────────
+    # ── Storage ────────────────────────────────────────────────────────
     MythTVSensorEntityDescription(
         key="storage_groups",
         name="Storage Groups",
@@ -188,13 +174,14 @@ SENSOR_DESCRIPTIONS: list[MythTVSensorEntityDescription] = [
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: len(d.get("storage_groups") or []),
         extra_attrs_fn=lambda d: {
+            # free_gb is in GiB (KiB / 1024²), labelled "GB" for user-friendliness.
+            # Total/used space is not available from the MythTV Services API.
             "storage_groups": [
                 {
-                    "group": sg.get("GroupName", ""),
-                    "directories": sg.get("Directories", ""),
-                    "used_gb": round(int(sg.get("UsedSpace", 0)) / 1024, 1),
-                    "free_gb": round(int(sg.get("FreeSpace", 0)) / 1024, 1),
-                    "total_gb": round(int(sg.get("TotalSpace", 0)) / 1024, 1),
+                    "group":       sg.get("group", ""),
+                    "free_gb":     sg.get("free_gb", 0),
+                    "directories": sg.get("directories", []),
+                    "dir_write":   sg.get("dir_write", True),
                 }
                 for sg in (d.get("storage_groups") or [])
             ]
@@ -208,18 +195,13 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up MythTV sensors."""
-    coordinator: MythTVDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        COORDINATOR
-    ]
+    coordinator: MythTVDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][COORDINATOR]
     async_add_entities(
-        MythTVSensor(coordinator, description) for description in SENSOR_DESCRIPTIONS
+        MythTVSensor(coordinator, desc) for desc in SENSOR_DESCRIPTIONS
     )
 
 
 class MythTVSensor(CoordinatorEntity[MythTVDataUpdateCoordinator], SensorEntity):
-    """A sensor that reads from the MythTV coordinator."""
-
     entity_description: MythTVSensorEntityDescription
     _attr_has_entity_name = True
 
@@ -243,18 +225,18 @@ class MythTVSensor(CoordinatorEntity[MythTVDataUpdateCoordinator], SensorEntity)
 
     @property
     def native_value(self):
-        if self.entity_description.value_fn:
+        if self.entity_description.value_fn and self.coordinator.data:
             try:
                 return self.entity_description.value_fn(self.coordinator.data)
             except Exception as err:
-                _LOGGER.debug("Error getting value for %s: %s", self.entity_description.key, err)
-                return None
+                _LOGGER.debug("Value error for %s: %s", self.entity_description.key, err)
+        return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        if self.entity_description.extra_attrs_fn:
+        if self.entity_description.extra_attrs_fn and self.coordinator.data:
             try:
                 return self.entity_description.extra_attrs_fn(self.coordinator.data) or {}
             except Exception as err:
-                _LOGGER.debug("Error getting attrs for %s: %s", self.entity_description.key, err)
+                _LOGGER.debug("Attr error for %s: %s", self.entity_description.key, err)
         return {}

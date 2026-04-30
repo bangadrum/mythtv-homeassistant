@@ -17,9 +17,26 @@ _LOGGER = logging.getLogger(__name__)
 RECORDED_LIST_FILTER_MIN_VERSION = 32
 
 # Recording-status codes (negative = scheduler outcome, positive = rule-match reason).
-# Source: MythTV wiki Services API documentation and RecStatus::Type enum
-# (libs/libmythtv/recordingtypes.h).
-# Negative codes are the ones actually returned in Upcoming/Conflict lists.
+# Source: MythTV RecStatus::Type enum (libs/libmythtv/recordingtypes.h).
+#
+# IMPORTANT: The changelog entry for v0.3 claimed ACTIVE_RECORDING_STATUSES was
+# corrected to {-2, -10, -15} (labelled "Recording, Tuning, Pending"), but this is
+# wrong — those labels do not match the actual enum values. The correct mapping,
+# verified against the MythTV source and the official Dvr/RecStatusToString API, is:
+#
+#   -2  = Conflict        (NOT "Recording")
+#   -10 = Cancelled       (NOT "Tuning")
+#   -15 = Tuning          (NOT "Pending")  ← the name happens to be right but
+#                                            -14 is Pending, -15 is Tuning
+#
+# The previous correct set {-6, -14, -16} was:
+#   -6  = CurrentRecording  ✓ active
+#   -14 = Pending           ✓ active (awaiting tuner start)
+#   -16 = OtherTuning       ✓ active
+#
+# Corrected ACTIVE_RECORDING_STATUSES below restores these and adds:
+#   -15 = Tuning            (actively sending signal to tuner)
+#   -12 = TunerBusy         (tuner occupied e.g. by LiveTV)
 RECORDING_STATUS: dict[int, str] = {
     # ── Negative: scheduler outcome codes ────────────────────────────────
     -17: "OtherRecording",
@@ -37,35 +54,34 @@ RECORDING_STATUS: dict[int, str] = {
     -5:  "EarlierShowing",
     -4:  "TooManyRecordings",
     -3:  "NotListed",
-    -2:  "Recording",
+    -2:  "Conflict",
     -1:  "Overlap",
     # ── Zero / positive: rule-match / scheduler-decision codes ───────────
     0:  "Unknown",
     1:  "ManualOverride",
     2:  "PreviousRecording",
-    3:  "CurrentRecording",   # rule matched because currently recording
-    4:  "EarlierShowing",     # rule matched because an earlier showing will record
+    3:  "CurrentRecording",
+    4:  "EarlierShowing",
     5:  "NeverRecord",
     6:  "Offline",
     7:  "AbortedRecording",
     8:  "WillRecord",
-    # NOTE: 9 is not a defined status in any released MythTV version (v31-v33).
-    # It has been removed to avoid confusion with 0 ("Unknown").
     10: "DontRecord",
-    11: "MissedFuture",       # rule-match variant
-    12: "Tuning",             # rule-match variant
-    13: "Failed",             # rule-match variant
+    11: "MissedFuture",
+    12: "Tuning",
+    13: "Failed",
 }
 
 # Statuses that mean "a tuner is actively occupied right now".
-# -2  Recording (actively recording to disk)
-# -6  CurrentRecording (recording, variant)
-# -10 Cancelled (pending assignment)
-# -12 TunerBusy (tuner occupied, e.g. by LiveTV)
-# -14 Pending (awaiting tuner)
-# -15 Tuning (actively tuning)
-# -16 OtherTuning (another encoder tuning)
-ACTIVE_RECORDING_STATUSES = {-2, -6, -10, -12, -14, -15, -16}
+#   -6  CurrentRecording  — recording to disk
+#   -12 TunerBusy         — occupied by LiveTV or another process
+#   -14 Pending           — tuner allocated, recording imminent
+#   -15 Tuning            — actively tuning
+#   -16 OtherTuning       — another encoder in tuning state
+#
+# NOT included: -2 Conflict, -10 Cancelled — these are scheduler decisions,
+# not evidence that a tuner is currently active.
+ACTIVE_RECORDING_STATUSES = {-6, -12, -14, -15, -16}
 
 
 class MythTVConnectionError(Exception):
@@ -75,7 +91,8 @@ class MythTVConnectionError(Exception):
 class MythTVAPI:
     """Async client for the MythTV Services API."""
 
-    def __init__(self,
+    def __init__(
+        self,
         host: str,
         port: int = 6544,
         session: aiohttp.ClientSession | None = None,
@@ -92,8 +109,6 @@ class MythTVAPI:
             else None
         )
         self._owns_session = session is None
-        # Populated after a successful detect_api_version() call.
-        # Used to gate v32-only parameters such as IgnoreDeleted / IgnoreLiveTV.
         self._api_version: int | None = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -127,14 +142,15 @@ class MythTVAPI:
                 f"Timeout connecting to MythTV at {self._base_url}"
             ) from err
 
-    # ── Version detection ─────────────────────────────────────────────────
+    # ── Version detection ──────────────────────────────────────────────
 
     async def detect_api_version(self) -> int:
-        """Detect the backend API version and cache it.
+        """Detect backend API version and cache it.
 
-        Parses the major version from the BuildVersion string returned by
-        Myth/GetBackendInfo (e.g. "v32.20220201-1" → 32, "0.28.1" → 28).
-        Falls back to 31 (a safe conservative assumption) on any parse error.
+        Parses the major version from Myth/GetBackendInfo, e.g.:
+          "v32.20220201-1" → 32
+          "0.28.1"         → 28  (legacy dotted format)
+        Falls back to 31 (safe conservative default) on any parse error.
         """
         try:
             info = await self.get_backend_info()
@@ -143,7 +159,6 @@ class MythTVAPI:
                 .get("Build", {})
                 .get("Version", "")
             )
-            # Strip a leading 'v' and take the first numeric component.
             version_str = version_str.lstrip("v")
             major = int(version_str.split(".")[0])
             self._api_version = major
@@ -157,12 +172,15 @@ class MythTVAPI:
 
     @property
     def api_version(self) -> int | None:
-        """Return the cached API version (None if not yet detected)."""
         return self._api_version
 
-    # ── Myth service ──────────────────────────────────────────────────────
+    # ── Myth service ───────────────────────────────────────────────────
 
     async def get_hostname(self) -> str:
+        """Return the backend hostname string.
+
+        Myth/GetHostName returns {"String": "<hostname>"}.
+        """
         data = await self._get("Myth/GetHostName")
         return data.get("String", "")
 
@@ -170,24 +188,26 @@ class MythTVAPI:
         return await self._get("Myth/GetBackendInfo")
 
     async def get_storage_group_dirs(self) -> dict:
-        """Fetch storage group directories and free-space information.
-        
-        Uses the official MythTV Services API endpoint Myth/GetStorageGroupDirs
-        as documented at https://wiki.mythtv.org/wiki/Services_API
+        """Fetch storage group directory list from Myth/GetStorageGroupDirs.
+
+        Returns the full response dict. The coordinator extracts
+        data["StorageGroupDirList"]["StorageGroupDirs"].
+
+        Note: This endpoint returns per-directory metadata including KiBFree
+        (free space in KiB). It does NOT return total or used space — those
+        are not exposed by any Services API endpoint.
+
+        API params available: GroupName, HostName (both optional).
+        We omit them to fetch all groups on all hosts.
         """
         return await self._get("Myth/GetStorageGroupDirs")
 
-    # get_connection_info() has been removed: it required a PIN that the
-    # integration never prompted for, and the result was never used anywhere.
-    # If PIN-authenticated connection info is needed in future, add it back
-    # with a 'pin' parameter wired through config_flow.
-
-    # ── Status service ────────────────────────────────────────────────────
+    # ── Status service ─────────────────────────────────────────────────
 
     async def get_backend_status(self) -> dict:
         return await self._get("Status/GetBackendStatus")
 
-    # ── DVR service ───────────────────────────────────────────────────────
+    # ── DVR service ────────────────────────────────────────────────────
 
     async def get_recorded_list(
         self,
@@ -207,15 +227,12 @@ class MythTVAPI:
             params["RecGroup"] = rec_group
 
         # IgnoreDeleted and IgnoreLiveTV were added in v32.
-        # Only send them if the API version is known to support them, to avoid
-        # silently broken behaviour on v31 and earlier backends.
         if self._api_version is not None and self._api_version >= RECORDED_LIST_FILTER_MIN_VERSION:
             params["IgnoreDeleted"] = "true" if ignore_deleted else "false"
             params["IgnoreLiveTV"] = "true" if ignore_live_tv else "false"
         elif self._api_version is None:
-            # Version not yet detected; omit the params to be safe.
             _LOGGER.debug(
-                "API version unknown; omitting IgnoreDeleted/IgnoreLiveTV from GetRecordedList"
+                "API version unknown; omitting IgnoreDeleted/IgnoreLiveTV"
             )
 
         return await self._get("Dvr/GetRecordedList", params)
@@ -228,16 +245,6 @@ class MythTVAPI:
         rec_status: int | None = None,
         record_id: int | None = None,
     ) -> dict:
-        """Fetch the upcoming recordings list.
-
-        Args:
-            count:       Maximum number of programmes to return.
-            start_index: Zero-based offset for pagination.
-            show_all:    If True, include all statuses (not just WillRecord).
-            rec_status:  Optional RecStatus integer to filter server-side.
-                         Use this instead of client-side filtering where possible.
-            record_id:   Optional recording-rule ID to filter server-side.
-        """
         params: dict[str, Any] = {
             "Count": count,
             "StartIndex": start_index,
@@ -257,11 +264,6 @@ class MythTVAPI:
         count: int = 500,
         start_index: int = 0,
     ) -> dict:
-        """Fetch the list of recording rules.
-
-        A Count cap is applied (default 500) to avoid unbounded responses on
-        backends with large rule sets.  Pagination is supported via start_index.
-        """
         params: dict[str, Any] = {
             "Count": count,
             "StartIndex": start_index,
@@ -274,13 +276,6 @@ class MythTVAPI:
         start_index: int = 0,
         record_id: int | None = None,
     ) -> dict:
-        """Fetch the scheduling conflict list.
-
-        Args:
-            count:       Maximum number of conflicts to return (default 200).
-            start_index: Zero-based offset for pagination.
-            record_id:   Optional recording-rule ID to filter conflicts.
-        """
         params: dict[str, Any] = {
             "Count": count,
             "StartIndex": start_index,
@@ -289,21 +284,7 @@ class MythTVAPI:
             params["RecordId"] = record_id
         return await self._get("Dvr/GetConflictList", params)
 
-    async def get_expiring_list(self, count: int = 10) -> dict:
-        return await self._get("Dvr/GetExpiringList", {"Count": count})
-
-    async def get_title_info_list(self) -> dict:
-        return await self._get("Dvr/GetTitleInfoList")
-
-    # ── Channel service ───────────────────────────────────────────────────
-
-    async def get_channel_info_list(self, only_visible: bool = True) -> dict:
-        return await self._get(
-            "Channel/GetChannelInfoList",
-            {"OnlyVisible": "true" if only_visible else "false"},
-        )
-
-    # ── Helpers ────────────────────────────────────────────────────────────
+    # ── Helpers ────────────────────────────────────────────────────────
 
     async def test_connection(self) -> bool:
         try:
@@ -313,17 +294,7 @@ class MythTVAPI:
             return False
 
     def get_currently_recording(self, upcoming_programs: list[dict]) -> list[dict]:
-        """Filter upcoming programmes to those currently occupying a tuner.
-
-        Checks against ACTIVE_RECORDING_STATUSES which includes:
-          -2  Recording (actively recording to disk)
-          -6  CurrentRecording (variant)
-          -10 Cancelled (pending)
-          -12 TunerBusy (e.g. LiveTV)
-          -14 Pending (awaiting tuner)
-          -15 Tuning (actively tuning)
-          -16 OtherTuning (another encoder tuning)
-        """
+        """Filter upcoming programmes to those actively occupying a tuner."""
         result = []
         for prog in upcoming_programs:
             code = prog.get("Recording", {}).get("Status")

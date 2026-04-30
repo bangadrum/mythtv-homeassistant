@@ -2,18 +2,18 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to MythTV Backend",
-        "description": "Enter the details of your MythTV backend server.",
+        "description": "Enter your MythTV backend details.",
         "data": {
-          "host": "Host (IP or hostname)",
-          "port": "Port (default 6544)",
-          "upcoming_count": "Number of upcoming recordings to track",
-          "recorded_count": "Number of recent recordings to track"
+          "host": "Host",
+          "port": "Port",
+          "upcoming_count": "Upcoming recordings to track (1–50)",
+          "recorded_count": "Recent recordings to track (1–50)"
         }
       }
     },
     "error": {
-      "cannot_connect": "Cannot connect to MythTV backend. Check the host, port, and that mythbackend is running."
+      "cannot_connect": "Failed to connect — check host and port.",
+      "unknown": "Unexpected error. Check Home Assistant logs."
     },
     "abort": {
       "already_configured": "This MythTV backend is already configured."
