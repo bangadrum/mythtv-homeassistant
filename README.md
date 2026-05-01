@@ -1,52 +1,21 @@
 # MythTV Home Assistant Integration
 
-A custom integration for [Home Assistant](https://www.home-assistant.io/) that connects to your **MythTV** backend via the [MythTV Services API](https://wiki.mythtv.org/wiki/Category:Services_API) and exposes useful information as sensors and binary sensors.
+[![HACS Custom][hacs-badge]][hacs-url]
+[![GitHub Release][release-badge]][release-url]
+[![HA min version][ha-badge]][ha-url]
+[![License][license-badge]](LICENSE)
 
-> **Version 0.4.0** — fixes recording status codes, active recording detection, storage data source and aggregation, conflict attribute routing, and card entity defaults. See [Changelog](#changelog).
+[hacs-badge]: https://img.shields.io/badge/HACS-Custom-orange.svg
+[hacs-url]: https://hacs.xyz
+[release-badge]: https://img.shields.io/github/release/bangadrum/mythtv-homeassistant.svg
+[release-url]: https://github.com/bangadrum/mythtv-homeassistant/releases
+[ha-badge]: https://img.shields.io/badge/HA-2023.1%2B-blue.svg
+[ha-url]: https://www.home-assistant.io
+[license-badge]: https://img.shields.io/github/license/bangadrum/mythtv-homeassistant.svg
 
----
+A custom integration for [Home Assistant](https://www.home-assistant.io/) that connects to your **MythTV** backend via the [MythTV Services API](https://wiki.mythtv.org/wiki/Category:Services_API) and exposes backend status, recordings, encoders, and storage as sensors and binary sensors, along with a Lovelace dashboard card.
 
-## Entities
-
-| Entity | Type | Description |
-|---|---|---|
-| Backend Connected | Binary Sensor | Whether the MythTV backend is reachable |
-| Currently Recording | Binary Sensor | `on` when any tuner is actively recording |
-| Recording Conflicts | Binary Sensor | `on` when scheduling conflicts exist |
-| All Encoders Busy | Binary Sensor | `on` when every tuner is in use |
-| Active Recordings | Sensor | Count of current recordings + details |
-| Next Recording | Sensor | Title of the next scheduled recording |
-| Next Recording Start | Sensor | Timestamp of the next scheduled recording |
-| Upcoming Recordings | Sensor | Total count of upcoming recordings |
-| Total Recordings | Sensor | Size of the recorded library |
-| Last Recorded | Sensor | Most recently recorded programme title |
-| Recording Schedules | Sensor | Number of active recording rules |
-| Total Encoders | Sensor | Number of capture cards + per-tuner state |
-| Storage Groups | Sensor | Count + free space per storage group |
-| Backend Hostname | Sensor | MythTV backend hostname + version string |
-
-All sensors expose rich `extra_state_attributes` (viewable in Developer Tools → States).
-
-> **Storage space note:** `Myth/GetStorageGroupDirs` reports free space per directory (`KiBFree`) but does **not** expose total or used space. Free space is the only storage metric available from the MythTV Services API. Values are shown in GiB.
-
----
-
-## Repository structure
-
-```
-mythtv-homeassistant/
-├── __init__.py          # Integration entry point
-├── binary_sensor.py     # Binary sensors
-├── config_flow.py       # UI config flow
-├── const.py             # Constants
-├── coordinator.py       # DataUpdateCoordinator
-├── manifest.json        # HA integration manifest
-├── mythtv_api.py        # Async MythTV Services API client
-├── mythtv-card.js       # Lovelace dashboard card (copy to www/)
-├── sensor.py            # Sensors
-├── strings.json         # UI strings
-└── README.md
-```
+![MythTV Card Preview](mythtv-card-preview.png)
 
 ---
 
@@ -54,35 +23,75 @@ mythtv-homeassistant/
 
 ### Via HACS (recommended)
 
-1. In HACS → Custom repositories → add `https://github.com/bangadrum/mythtv-homeassistant` → Integration.
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bangadrum&repository=mythtv-homeassistant&category=integration)
+
+1. Click the button above, or in HACS → **Custom repositories** → add `https://github.com/bangadrum/mythtv-homeassistant` → **Integration**.
 2. Install **MythTV**.
 3. Restart Home Assistant.
 
 ### Manual
 
-1. Copy all `.py` files and `manifest.json` into `config/custom_components/mythtv/`.
-2. Restart Home Assistant.
+1. Download the [latest release](https://github.com/bangadrum/mythtv-homeassistant/releases/latest).
+2. Copy the `custom_components/mythtv/` directory into your `<config>/custom_components/` directory.
+3. Restart Home Assistant.
 
 ---
 
 ## Configuration
 
-1. **Settings → Devices & Services → Add Integration → MythTV**
-2. Fill in:
-   - **Host** — IP or hostname of the machine running `mythbackend`
-   - **Port** — default `6544`
-   - **Upcoming recordings to track** — 1–50, default 10
-   - **Recent recordings to track** — 1–50, default 10
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=mythtv)
 
-All MythTV timestamps are UTC. Home Assistant converts them to your local timezone automatically for `timestamp` device-class sensors.
+Or go to **Settings → Devices & Services → Add Integration → MythTV** and enter:
+
+| Field | Default | Description |
+|---|---|---|
+| Host | — | IP address or hostname of the MythTV backend |
+| Port | `6544` | Services API port |
+| Upcoming recordings to track | `10` | Records fetched per poll (1–50) |
+| Recent recordings to track | `10` | Library entries fetched per poll (1–50) |
 
 ---
 
-## Custom Lovelace Card
+## Entities
 
-**Step 1** — copy `mythtv-card.js` to `config/www/mythtv-card.js`
+### Binary Sensors
 
-**Step 2** — register the resource (**Settings → Dashboards → Resources**):
+| Entity | Device Class | Description |
+|---|---|---|
+| `binary_sensor.mythtv_backend_connected` | Connectivity | Backend is reachable |
+| `binary_sensor.mythtv_currently_recording` | Running | Any tuner is actively recording |
+| `binary_sensor.mythtv_recording_conflicts` | Problem | Scheduling conflicts exist |
+| `binary_sensor.mythtv_all_encoders_busy` | Occupancy | Every tuner is in use |
+
+### Sensors
+
+| Entity | Description |
+|---|---|
+| `sensor.mythtv_backend_hostname` | Backend hostname + version (diagnostic) |
+| `sensor.mythtv_active_recordings` | Count of active recordings + details |
+| `sensor.mythtv_next_recording` | Title of next scheduled recording |
+| `sensor.mythtv_next_recording_start` | Timestamp of next recording (timestamp class) |
+| `sensor.mythtv_upcoming_recordings` | Total upcoming recording count |
+| `sensor.mythtv_total_recordings` | Library size |
+| `sensor.mythtv_last_recorded` | Most recently recorded title |
+| `sensor.mythtv_recording_schedules` | Number of recording rules |
+| `sensor.mythtv_recording_conflicts` | Conflict count + programme list |
+| `sensor.mythtv_total_encoders` | Encoder count + per-tuner state |
+| `sensor.mythtv_storage_groups` | Storage group count + free space per group |
+
+All sensors expose rich data in `extra_state_attributes` — viewable in **Developer Tools → States**.
+
+> **Storage note:** `Myth/GetStorageGroupDirs` reports free space (`KiBFree`) but not total or used space. Free space is the only storage metric available from the MythTV Services API.
+
+---
+
+## Lovelace Card
+
+The included `mythtv-card.js` is a custom Lovelace card. It must be installed **manually** — it is not managed by HACS automatically when installing the integration.
+
+**Step 1** — copy `mythtv-card.js` from the [latest release](https://github.com/bangadrum/mythtv-homeassistant/releases/latest) to `<config>/www/mythtv-card.js`.
+
+**Step 2** — register the resource in **Settings → Dashboards → Resources**:
 ```yaml
 resources:
   - url: /local/mythtv-card.js
@@ -95,7 +104,7 @@ type: custom:mythtv-card
 title: MythTV
 ```
 
-All entity IDs default to the names the integration creates. Override only if yours differ:
+All entity IDs default to the names created by this integration. Override only if yours differ:
 ```yaml
 type: custom:mythtv-card
 title: MythTV
@@ -113,30 +122,29 @@ hostname_entity:         sensor.mythtv_backend_hostname
 
 ---
 
+## Requirements
+
+- Home Assistant 2023.1 or later
+- MythTV v0.28 or later (v32+ recommended for full feature support)
+- `mythbackend` reachable from the HA host on port 6544
+
+---
+
 ## API Endpoints Used
 
 | Endpoint | Purpose |
 |---|---|
-| `Myth/GetHostName` | Connectivity test + hostname (`String` key) |
-| `Myth/GetBackendInfo` | Version (`BackendInfo.Build.Version`) |
-| `Myth/GetStorageGroupDirs` | Directory free-space (`StorageGroupDirList.StorageGroupDirs[].KiBFree`) |
-| `Status/GetBackendStatus` | Raw status (retained for diagnostics) |
-| `Dvr/GetUpcomingList` | Upcoming & active recordings (`ProgramList.Programs`) |
-| `Dvr/GetRecordedList` | Recorded library (`ProgramList.Programs`) |
-| `Dvr/GetEncoderList` | Tuner states (`EncoderList.Encoders[].State`) |
-| `Dvr/GetRecordScheduleList` | Recording rules (`RecRuleList.RecRules`) |
-| `Dvr/GetConflictList` | Scheduling conflicts (`ProgramList.Programs`) |
+| `Myth/GetHostName` | Connectivity test; returns `{"String": "<hostname>"}` |
+| `Myth/GetBackendInfo` | Version string (`BackendInfo.Build.Version`) |
+| `Myth/GetStorageGroupDirs` | Directory free space (`StorageGroupDirList.StorageGroupDirs[].KiBFree`) |
+| `Status/GetBackendStatus` | Raw status (diagnostic) |
+| `Dvr/GetUpcomingList` | Upcoming + active recordings |
+| `Dvr/GetRecordedList` | Recorded library (`IgnoreDeleted`/`IgnoreLiveTV` on v32+) |
+| `Dvr/GetEncoderList` | Tuner states (`Encoders[].State`: `0` = idle) |
+| `Dvr/GetRecordScheduleList` | Recording rules |
+| `Dvr/GetConflictList` | Scheduling conflicts |
 
-Data is refreshed every **60 seconds**.
-
----
-
-## Requirements
-
-- Home Assistant 2023.1 or later
-- MythTV v0.28 or later (v32+ for `IgnoreDeleted`/`IgnoreLiveTV` on `GetRecordedList`)
-- `mythbackend` reachable from the HA host on port 6544
-- Python: `aiohttp>=3.9.0` (installed automatically)
+Data is refreshed every **60 seconds** using a parallel `asyncio.gather` call.
 
 ---
 
@@ -156,7 +164,7 @@ automation:
           title: "🔴 MythTV Recording"
           message: >
             Now recording:
-            {{ state_attr('binary_sensor.mythtv_currently_recording','titles') | join(', ') }}
+            {{ state_attr('binary_sensor.mythtv_currently_recording', 'titles') | join(', ') }}
 ```
 
 ### Alert on scheduling conflicts
@@ -170,52 +178,50 @@ automation:
     action:
       - service: persistent_notification.create
         data:
-          title: "MythTV Conflict"
+          title: "MythTV Scheduling Conflict"
           message: >
-            {{ state_attr('binary_sensor.mythtv_recording_conflicts','conflict_count') }}
-            conflict(s): {{ state_attr('binary_sensor.mythtv_recording_conflicts','conflicts')
-              | map(attribute='title') | join(', ') }}
+            {{ state_attr('binary_sensor.mythtv_recording_conflicts', 'conflict_count') }}
+            conflict(s) detected:
+            {{ state_attr('binary_sensor.mythtv_recording_conflicts', 'conflicts')
+               | map(attribute='title') | join(', ') }}
 ```
-
----
-
-## Changelog
-
-### 0.4.0
-
-- **Fixed `ACTIVE_RECORDING_STATUSES`** — the v0.3 changelog claimed the set was corrected to `{-2, -10, -15}` labelled "Recording, Tuning, Pending", but those codes are actually Conflict, Cancelled, and Tuning — the first two are NOT active tuner states. The correct set matching the MythTV `RecStatus::Type` enum is `{-6, -12, -14, -15, -16}`: CurrentRecording, TunerBusy, Pending, Tuning, OtherTuning.
-- **Fixed `RECORDING_STATUS` table** — corrected the negative-code label mapping to match the actual MythTV enum. `-2` is `Conflict` (not "Recording"), `-10` is `Cancelled` (not "Tuning"), `-14` is `Pending` (not "Failed"), `-15` is `Tuning`.
-- **Fixed `Myth/GetHostName` response key** — the endpoint returns `{"String": "<hostname>"}`. The code now reads `.get("String")` instead of `.get("HostName")`.
-- **Fixed storage aggregation** — `Myth/GetStorageGroupDirs` returns `StorageGroupDirList.StorageGroupDirs`, not `StorageGroupDirs` at the top level. Directories are now grouped by `GroupName` with `KiBFree` summed per group and converted to GiB.
-- **Fixed conflict attribute routing in card** — `conflicts_entity` in the card now defaults to `sensor.mythtv_recording_conflicts` (which has the programme list attribute), not `binary_sensor.mythtv_recording_conflicts` (which does not).
-- **Fixed card `setConfig()` guard** — removed the check for the non-existent `host_entity` key that caused the card to throw on all valid configs.
-- **Fixed `coordinator.py` storage key** — response key corrected from `StorageGroupDirs` (top-level) to `StorageGroupDirList.StorageGroupDirs`.
-- **Fixed `config_flow.py` unique ID** — now uses `host:port` (stable) instead of the display title (changes if hostname changes).
-- **Updated `manifest.json`** — added `homeassistant: "2023.1.0"` minimum version; corrected `loggers` key.
-- **Version bump to 0.4.0**.
-
-### 0.3.0
-
-- Fixed recording status codes, storage data source, conflict attributes, manifest URLs.
-
-### 0.2.0
-
-- Initial public release.
 
 ---
 
 ## Troubleshooting
 
-**Integration shows unavailable** — confirm `mythbackend` is running and reachable on the configured host and port. Check HA logs for `custom_components.mythtv`.
+**Integration shows unavailable** — confirm `mythbackend` is running and reachable. Check HA logs under `custom_components.mythtv`.
 
-**All encoders / recordings show 0** — check HA logs; the most common cause is the API returning an unexpected JSON shape. Enable debug logging:
+**All encoders / recordings show 0** — enable debug logging:
 ```yaml
 logger:
   logs:
     custom_components.mythtv: debug
 ```
 
-**Storage shows no data** — ensure `mythbackend` has storage groups configured (`mythtv-setup → Storage Groups`).
+**Storage shows no data** — ensure `mythbackend` has storage groups configured (MythTV Setup → Storage Groups).
+
+---
+
+## Changelog
+
+### 0.4.0
+- Fixed `ACTIVE_RECORDING_STATUSES` — corrected to `{-6, -12, -14, -15, -16}` matching the MythTV `RecStatus::Type` enum
+- Fixed `Myth/GetHostName` response key (`.get("String")`)
+- Fixed storage response key: `StorageGroupDirList.StorageGroupDirs`; aggregated by `GroupName`
+- Fixed conflict attribute routing in Lovelace card (sensor, not binary sensor)
+- Fixed `config_flow.py` unique ID to use `host:port`
+- Added `translations/en.json` for config flow UI
+- Added `brand/icon.png`
+- Added `hacs.json`
+- Moved integration files into `custom_components/mythtv/` for HACS compliance
+- Added GitHub Actions HACS validation + hassfest workflow
+
+### 0.3.0
+- Fixed recording status codes, storage data source, conflict attributes
+
+### 0.2.0
+- Initial public release
 
 ---
 
