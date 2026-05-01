@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to MythTV",
+        "description": "Enter your MythTV backend details.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "upcoming_count": "Upcoming recordings to track",
+          "recorded_count": "Recent recordings to track"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the machine running mythbackend.",
+          "port": "Services API port, default 6544.",
+          "upcoming_count": "Number of upcoming recordings fetched per poll (1–50).",
+          "recorded_count": "Number of recent recordings fetched per poll (1–50)."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect — check host and port.",
+      "unknown": "Unexpected error. Check Home Assistant logs."
+    },
+    "abort": {
+      "already_configured": "This MythTV backend is already configured."
+    }
+  }
+}
