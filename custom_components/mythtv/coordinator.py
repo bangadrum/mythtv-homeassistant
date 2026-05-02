@@ -58,7 +58,7 @@ class MythTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.api.get_backend_info(),
                 self.api.get_backend_status(),
                 self.api.get_storage_group_dirs(),
-                self.api.get_upcoming_list(count=self.upcoming_count),
+                self.api.get_upcoming_list(count=self.upcoming_count, show_all=True),
                 self.api.get_recorded_list(count=self.recorded_count),
                 self.api.get_encoder_list(),
                 self.api.get_conflict_list(),

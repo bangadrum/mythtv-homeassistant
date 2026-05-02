@@ -21,7 +21,7 @@
  * • FIXED: conflicts_entity correctly defaults to the sensor, not binary_sensor.
  */
 
-const VERSION = "1.0.4";
+const VERSION = "1.0.5";
 
 /* ─── Styles ──────────────────────────────────────────────────────────────── */
 const STYLES = `
@@ -157,13 +157,20 @@ function attrVal(hass, id, attr)    { return hass?.states?.[id]?.attributes?.[at
  * This has been corrected below.
  */
 function progStatusClass(prog) {
+  // rec_status is the human-readable label from _fmt_prog() e.g. "CurrentRecording".
+  // Recording.Status from the raw API JSON is a numeric string e.g. "-6".
+  // Handle all three forms: human label, numeric string, actual number.
   const status = prog?.rec_status ?? prog?.Recording?.Status ?? "";
   if (typeof status === "string") {
     const s = status.toLowerCase();
     if (["currentrecording","tuning","othertuning","tunerbusy","pending"].includes(s))
       return "recording";
     if (s === "conflict") return "conflict";
-    return "will-record";
+    const n = parseInt(status, 10);
+    if (!isNaN(n)) {
+      if ([-6,-12,-14,-15,-16].includes(n)) return "recording";
+      if (n === -2) return "conflict";
+    }
   }
   if (typeof status === "number") {
     if ([-6,-12,-14,-15,-16].includes(status)) return "recording";

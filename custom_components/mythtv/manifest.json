@@ -8,5 +8,5 @@
   "issue_tracker": "https://github.com/bangadrum/mythtv-homeassistant/issues",
   "loggers": ["custom_components.mythtv"],
   "requirements": ["aiohttp>=3.9.0"],
-  "version": "0.4.1"
+  "version": "0.4.2"
 }

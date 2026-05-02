@@ -205,6 +205,10 @@ logger:
 
 ## Changelog
 
+### 0.4.2
+- Fixed active recordings not showing: `GetUpcomingList` now called with `ShowAll=true` so currently-recording programmes (status -6) are included — MythTV excludes them from the default upcoming list
+- Fixed card showing "conflict" instead of "recording": `progStatusClass()` now handles numeric-string status codes (e.g. "-6") returned directly from the API JSON, in addition to human-readable labels
+
 ### 0.4.1
 - Fixed manifest.json: removed invalid `homeassistant` key (belongs in `hacs.json` only)
 
