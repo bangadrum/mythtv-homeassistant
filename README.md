@@ -17,7 +17,7 @@ A custom integration for [Home Assistant](https://www.home-assistant.io/) that c
 
 ![MythTV Card Preview](mythtv-card-preview.png)
 
-> **MythTV v34 users:** Recording status codes changed completely between v31–v33 and v34. Version 0.4.4 uses codes verified against a live v34 backend. See [info.md](info.md) for the full reference.
+> **MythTV v34 users:** Recording status codes changed completely between v31–v33 and v34. Version 0.5.0 uses codes verified against a live v34 backend, with a correction to the active-recording set (see Changelog). See [info.md](info.md) for the full reference.
 
 ---
 
@@ -216,7 +216,22 @@ See [info.md](info.md) for the complete recording status code table, the active 
 
 ## Changelog
 
-### 0.4.5
+### 0.5.0
+- **Fixed: `TunerBusy (-8)` incorrectly treated as an active recording status.**
+  `ACTIVE_RECORDING_STATUSES` is now `{-2, -10, -14, -15}` (was
+  `{-2, -8, -10, -14, -15}`). Per MythTV's own status reference, `TunerBusy`
+  means *that showing* did **not** record because the tuner it needed was
+  already in use — it's a terminal "lost the conflict" outcome, not a sign
+  the showing is occupying a tuner. This bug caused programmes that did not
+  actually record to appear in `sensor.mythtv_active_recordings` and could
+  flip `binary_sensor.mythtv_currently_recording` on when nothing was
+  recording. See [info.md](info.md) for details.
+- Fixed a duplicate status label: `-11` is `MissedFuture`, distinct from
+  `-5` (`Missed`). Previously both rendered as `"Missed"` in status
+  attributes.
+- Removed an unused import in `coordinator.py`.
+
+### 0.4.4
 - **NEW: LiveTV detection.** `GetEncoderList` is parsed for encoders with
   `State != 0` and `Recording.RecGroup == "LiveTV"`. LiveTV does not appear
   in `GetUpcomingList` — the encoder list is the only source.
@@ -268,13 +283,3 @@ See [info.md](info.md) for the complete recording status code table, the active 
 ## License
 
 MIT
-
----
-
-## 🔗 Links
-
-- [Home Assistant](https://www.home-assistant.io/)
-- [MythTV](https://www.mythtv.org/)
----
-
-*Made with ❤️ for the Home Assistant community*

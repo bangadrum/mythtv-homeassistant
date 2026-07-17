@@ -19,10 +19,10 @@ verified directly from a live **MythTV v34** backend using
 |-----:|---|---|:---:|
 | **−15** | `Pending` | Tuner allocated; recording imminent | ✅ |
 | **−14** | `Failing` | Recording in progress but with errors | ✅ |
-| **−11** | `Missed` | Recording was missed (duplicate of −5?) | |
+| **−11** | `MissedFuture` | An upcoming showing is predicted to be missed | |
 | **−10** | `Tuning` | Tuner is actively tuning | ✅ |
 | **−9** | `Recorder Failed` | Recorder process failed | |
-| **−8** | `Tuner Busy` | Tuner occupied (e.g. LiveTV) | ✅ |
+| **−8** | `Tuner Busy` | **This showing** will not record — the tuner it needed was already in use by something else | |
 | **−7** | `Low Disk Space` | Recording aborted — insufficient disk | |
 | **−6** | `Manual Cancel` | Manually cancelled by user | |
 | **−5** | `Missed` | Missed (e.g. backend was offline) | |
@@ -57,13 +57,23 @@ currently occupied (`ACTIVE_RECORDING_STATUSES`):
 | Code | Meaning |
 |-----:|---|
 | **−2** | Recording — actively writing to disk |
-| **−8** | Tuner Busy — occupied by LiveTV or another process |
 | **−10** | Tuning — tuner is acquiring signal |
 | **−14** | Failing — recording in progress (with errors) |
 | **−15** | Pending — tuner allocated, start imminent |
 
 `WillRecord (−1)` is **not** in this set — it means scheduled for the
 future, not currently occupying a tuner.
+
+> **Correction (0.5.0):** `TunerBusy (−8)` was previously included in this
+> set on the assumption that it meant "occupied by LiveTV or another
+> process." That's backwards. Per MythTV's own status reference, `TunerBusy`
+> means *this showing* will not record because the tuner it needed was
+> already in use by something else — it's a terminal "lost the conflict"
+> outcome for that particular scheduled item, not a sign that item is
+> occupying a tuner. Including it caused programmes that did **not** record
+> to appear in `sensor.mythtv_active_recordings` and to flip
+> `binary_sensor.mythtv_currently_recording` on incorrectly. It has been
+> removed from the set.
 
 ---
 
@@ -104,7 +114,7 @@ Status codes appear in responses from:
 The integration calls `GetUpcomingList` with `ShowAll=true` to retrieve
 all statuses in a single request, then splits the result in the coordinator:
 
-- **Currently recording** → `ACTIVE_RECORDING_STATUSES` (−2, −8, −10, −14, −15)
+- **Currently recording** → `ACTIVE_RECORDING_STATUSES` (−2, −10, −14, −15)
 - **Upcoming** → `WillRecord` (−1) only
 
 ---
