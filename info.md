@@ -64,7 +64,7 @@ currently occupied (`ACTIVE_RECORDING_STATUSES`):
 `WillRecord (−1)` is **not** in this set — it means scheduled for the
 future, not currently occupying a tuner.
 
-> **Correction (0.4.5):** `TunerBusy (−8)` was previously included in this
+> **Correction (0.5.0):** `TunerBusy (−8)` was previously included in this
 > set on the assumption that it meant "occupied by LiveTV or another
 > process." That's backwards. Per MythTV's own status reference, `TunerBusy`
 > means *this showing* will not record because the tuner it needed was

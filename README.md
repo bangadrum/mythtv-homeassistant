@@ -17,7 +17,7 @@ A custom integration for [Home Assistant](https://www.home-assistant.io/) that c
 
 ![MythTV Card Preview](mythtv-card-preview.png)
 
-> **MythTV v34 users:** Recording status codes changed completely between v31–v33 and v34. Version 0.4.5 uses codes verified against a live v34 backend, with a correction to the active-recording set (see Changelog). See [info.md](info.md) for the full reference.
+> **MythTV v34 users:** Recording status codes changed completely between v31–v33 and v34. Version 0.5.0 uses codes verified against a live v34 backend, with a correction to the active-recording set (see Changelog). See [info.md](info.md) for the full reference.
 
 ---
 
@@ -216,7 +216,7 @@ See [info.md](info.md) for the complete recording status code table, the active 
 
 ## Changelog
 
-### 0.4.5
+### 0.5.0
 - **Fixed: `TunerBusy (-8)` incorrectly treated as an active recording status.**
   `ACTIVE_RECORDING_STATUSES` is now `{-2, -10, -14, -15}` (was
   `{-2, -8, -10, -14, -15}`). Per MythTV's own status reference, `TunerBusy`
