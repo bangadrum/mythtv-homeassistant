@@ -12,7 +12,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DEFAULT_RECORDED_COUNT, DEFAULT_SCAN_INTERVAL, DEFAULT_UPCOMING_COUNT, DOMAIN
 from .mythtv_api import (
-    ACTIVE_RECORDING_STATUSES,
     WILL_RECORD_STATUS,
     MythTVAPI,
     MythTVConnectionError,

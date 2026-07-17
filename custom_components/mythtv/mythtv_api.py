@@ -26,7 +26,7 @@ RECORDING_STATUS: dict[int, str] = {
     # ── Negative: active / terminal outcomes ──────────────────────────
     -15: "Pending",
     -14: "Failing",
-    -11: "Missed",
+    -11: "MissedFuture",
     -10: "Tuning",
     -9:  "RecorderFailed",
     -8:  "TunerBusy",
@@ -54,15 +54,21 @@ RECORDING_STATUS: dict[int, str] = {
     12:  "RecorderOffLine",
 }
 
-# Statuses that mean a tuner is actively occupied right now (v34 verified).
+# Statuses that mean a tuner is actively occupied right now (v34 verified
+# against MythTV's own RecStatus reference: https://www.mythtv.org/wiki/Recording_Status).
 #   -2  Recording   — actively writing to disk
-#   -8  TunerBusy   — occupied by LiveTV or another process
 #   -10 Tuning      — tuner is acquiring signal
 #   -14 Failing     — recording in progress but with errors
 #   -15 Pending     — tuner allocated, start imminent
 #
+# TunerBusy (-8) is deliberately EXCLUDED: per MythTV's own docs it means
+# "This showing was not recorded because the recorder was already in use" —
+# i.e. it's a terminal "lost the conflict" outcome for *this* scheduled
+# showing, not a sign that this showing is occupying a tuner. Including it
+# previously caused programmes that did NOT record to show up as active.
+#
 # WillRecord (-1) is NOT included — future schedule, not yet occupying a tuner.
-ACTIVE_RECORDING_STATUSES: frozenset[int] = frozenset({-2, -8, -10, -14, -15})
+ACTIVE_RECORDING_STATUSES: frozenset[int] = frozenset({-2, -10, -14, -15})
 
 # WillRecord status code (v34).
 WILL_RECORD_STATUS = -1
