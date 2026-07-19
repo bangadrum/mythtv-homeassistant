@@ -19,6 +19,20 @@ from .mythtv_api import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Dvr/GetUpcomingList's Count parameter limits the RAW list the backend
+# returns, BEFORE any status filtering happens on our side. Because we pass
+# ShowAll=true (needed to also catch currently-recording items), that raw
+# list is time-ordered across *every* status -- including a "won't record"
+# entry for every duplicate/repeat/conflict MythTV generates for each
+# followed show. If Count is small (e.g. the user's configured
+# upcoming_count, which may be as low as 1), genuine WillRecord programmes
+# further down the guide can be pushed past the fetch window and never
+# reach our client-side filter at all -- the "Upcoming Recordings" sensor
+# then reports zero even though recordings ARE scheduled. To avoid this we
+# always fetch a generous raw batch, then trim the *filtered* upcoming list
+# to the user's configured count afterwards, for display.
+UPCOMING_RAW_FETCH_COUNT = 200
+
 
 class MythTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Fetch all data from MythTV backend in a single coordinated update."""
@@ -62,7 +76,10 @@ class MythTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.api.get_backend_info(),
                 self.api.get_backend_status(),
                 self.api.get_storage_group_dirs(),
-                self.api.get_upcoming_list(count=self.upcoming_count, show_all=True),
+                self.api.get_upcoming_list(
+                    count=max(UPCOMING_RAW_FETCH_COUNT, self.upcoming_count),
+                    show_all=True,
+                ),
                 self.api.get_recorded_list(count=self.recorded_count),
                 self.api.get_encoder_list(),
                 self.api.get_conflict_list(),
@@ -73,11 +90,15 @@ class MythTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"MythTV connection error: {err}") from err
 
         # GetUpcomingList is called with ShowAll=true so currently-recording
-        # programmes are included alongside future ones. We then split into
-        # two distinct lists:
+        # programmes are included alongside future ones, and with a raw Count
+        # of UPCOMING_RAW_FETCH_COUNT (not upcoming_count -- see comment on
+        # that constant above) so genuine upcoming items aren't truncated
+        # away by unrelated non-recording entries ahead of them in the list.
+        # We then split the raw response into two distinct lists:
         #
         #   currently_recording — status in ACTIVE_RECORDING_STATUSES
-        #   upcoming_programs   — status == WILL_RECORD_STATUS only
+        #   upcoming_programs   — status == WILL_RECORD_STATUS only,
+        #                         trimmed to upcoming_count for display
         #
         # This keeps the "upcoming" sensor/card section clean and ensures the
         # active recordings sensor only shows programmes on a live tuner.
@@ -91,7 +112,7 @@ class MythTVDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         upcoming_programs: list[dict] = [
             p for p in all_scheduled
             if _status_int(p) == WILL_RECORD_STATUS
-        ]
+        ][: self.upcoming_count]
 
         recorded_programs: list[dict] = (
             (recorded_raw or {}).get("ProgramList", {}).get("Programs") or []
