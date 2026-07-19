@@ -117,6 +117,17 @@ all statuses in a single request, then splits the result in the coordinator:
 - **Currently recording** → `ACTIVE_RECORDING_STATUSES` (−2, −10, −14, −15)
 - **Upcoming** → `WillRecord` (−1) only
 
+> **Gotcha (fixed in 0.5.1):** `Count` limits the *raw* list the backend
+> returns — **before** any status filtering happens client-side. With
+> `ShowAll=true`, that raw list is time-ordered across every status, so a
+> small `Count` can return zero `WillRecord` entries even when recordings
+> ARE scheduled, if the near-term guide is dense with unrelated "won't
+> record" entries (duplicates, repeats, conflicts) for other followed shows.
+> The integration now fetches a generous raw batch regardless of the
+> user's configured `upcoming_count`, and trims the *filtered* result
+> afterward for display. Do not pass a small user-facing count directly as
+> `Count` when also using `ShowAll=true`.
+
 ---
 
 ## LiveTV Detection

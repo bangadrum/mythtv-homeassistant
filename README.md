@@ -216,6 +216,24 @@ See [info.md](info.md) for the complete recording status code table, the active 
 
 ## Changelog
 
+### 0.5.1
+- **Fixed: "Upcoming Recordings" could report 0 even with recordings scheduled.**
+  `Dvr/GetUpcomingList`'s `Count` parameter limits the *raw* list the backend
+  returns, before any status filtering happens on our side. Because the
+  integration calls it with `ShowAll=true` (needed to also catch
+  currently-recording items), that raw list is time-ordered across *every*
+  status — including a "won't record" entry for each duplicate/repeat/
+  conflict MythTV generates per followed show. With a small `Count` (the
+  user's configured `upcoming_count`, as low as 1), genuine `WillRecord`
+  programmes further down the guide could be pushed past the fetch window
+  and never reach the filter. The coordinator now always fetches a generous
+  raw batch (200) and trims the *filtered* result to the configured count
+  for display, instead of limiting the raw fetch itself.
+- **Card:** `progStatusClass()` in `mythtv-card.js` updated to match the
+  0.5.0 `ACTIVE_RECORDING_STATUSES` fix — it had not been updated when the
+  integration dropped `TunerBusy (-8)` from the active set, so the card
+  could still badge non-recording showings as actively recording.
+
 ### 0.5.0
 - **Fixed: `TunerBusy (-8)` incorrectly treated as an active recording status.**
   `ACTIVE_RECORDING_STATUSES` is now `{-2, -10, -14, -15}` (was
