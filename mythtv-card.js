@@ -1,9 +1,17 @@
 /**
- * MythTV Dashboard Card for Home Assistant  v1.0.6
+ * MythTV Dashboard Card for Home Assistant  v1.0.9
  *
  * Install: copy to <config>/www/mythtv-card.js
  * Register: Settings → Dashboards → Resources → /local/mythtv-card.js (module)
  * Use:      type: custom:mythtv-card
+ *
+ * Changelog v1.0.9
+ * ─────────────────
+ * • FIXED: progStatusClass() no longer treats TunerBusy (-8) as an active
+ *   recording. Per MythTV's own status reference, TunerBusy means a showing
+ *   did NOT record because the tuner it needed was already in use -- a
+ *   terminal lost-the-conflict outcome, not an occupied tuner. Matches the
+ *   ACTIVE_RECORDING_STATUSES fix in mythtv_api.py 0.5.0. See info.md.
  *
  * Changelog v1.0.7
  * ─────────────────
@@ -15,22 +23,12 @@
  *     Tuning             : was -10, now -10  (unchanged)
  *     Pending            : was -15, now -15  (unchanged)
  *   progStatusClass() now uses the v34-verified ACTIVE_RECORDING_STATUSES
- *   {-2, -8, -10, -14, -15} and Conflicting = 7.
+ *   {-2, -10, -14, -15} and Conflicting = 7.
  * • FIXED: conflicts_entity defaults to sensor (has programme list attribute)
  *   not binary_sensor (which does not).
  * • FIXED: setConfig() no longer throws on valid configs.
  * • FIXED: storage section shows free_gb from coordinator-aggregated groups.
  * • See info.md in the repository for the full status code reference.
- *
- * Changelog v1.0.9
- * ─────────────────
- * • ADDED: Tap-to-history on all four stat cells (Recording, Upcoming, Tuners,
- *   Library), the conflict banner, the hostname text, and the status dot.
- *   Clicking any of these fires a hass-more-info event (composed:true so it
- *   crosses the shadow DOM boundary) and opens the entity's history panel,
- *   matching the behaviour of built-in entity cards.
- *   A single delegated click listener on the shadow root is attached once and
- *   survives re-renders; section-head collapse handlers are unaffected.
  *
  * Changelog v1.0.8
  * ─────────────────
@@ -167,10 +165,6 @@ const STYLES = `
 /* Misc */
 .empty   { padding:14px 0; font-size:12px; color:var(--c-muted); font-style:italic; }
 .loading { padding:24px 18px; text-align:center; color:var(--c-muted); font-size:12px; }
-
-/* Tap-to-history */
-[data-entity] { cursor:pointer; }
-[data-entity]:hover { background:var(--c-dim); }
 `;
 
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
@@ -204,10 +198,16 @@ function attrVal(hass, id, attr) { return hass?.states?.[id]?.attributes?.[attr]
  * Status codes verified against live MythTV v34 via Dvr/RecStatusToString.
  * See info.md for the full table. Key v34 values:
  *
- *   ACTIVE (tuner occupied):  -2 Recording, -8 TunerBusy, -10 Tuning,
+ *   ACTIVE (tuner occupied):  -2 Recording, -10 Tuning,
  *                             -14 Failing,  -15 Pending
  *   CONFLICTING:               7
  *   WILL RECORD:              -1
+ *
+ * NOTE: TunerBusy (-8) is intentionally NOT treated as active. Per MythTV's
+ * own status reference it means "this showing will not record because the
+ * tuner it needed was already in use" -- a terminal lost-the-conflict
+ * outcome, not a sign of an occupied tuner. See mythtv_api.py /
+ * ACTIVE_RECORDING_STATUSES and info.md for the full explanation (0.5.0).
  *
  * The rec_status field in sensor attributes is the human-readable label
  * produced by rec_status_label() in mythtv_api.py, e.g. "Recording".
@@ -220,20 +220,20 @@ function progStatusClass(prog) {
     const s = status.toLowerCase();
 
     // Human-readable label path (from _fmt_prog / rec_status_label)
-    if (["recording", "tuning", "tunerbusy", "pending", "failing"].includes(s))
+    if (["recording", "tuning", "pending", "failing"].includes(s))
       return "recording";
     if (s === "conflicting") return "conflict";
 
     // Numeric-string path (raw API value e.g. "-2", "7")
     const n = parseInt(status, 10);
     if (!isNaN(n)) {
-      if ([-2, -8, -10, -14, -15].includes(n)) return "recording";
+      if ([-2, -10, -14, -15].includes(n)) return "recording";
       if (n === 7) return "conflict";
     }
   }
 
   if (typeof status === "number") {
-    if ([-2, -8, -10, -14, -15].includes(status)) return "recording";
+    if ([-2, -10, -14, -15].includes(status)) return "recording";
     if (status === 7) return "conflict";
   }
 
@@ -274,18 +274,6 @@ class MythTVCard extends HTMLElement {
     this._config   = {};
     this._hass     = null;
     this._sections = { recording:true, livetv:false, upcoming:true, recent:true, storage:false };
-    this._clickListenerAttached = false;
-  }
-
-  // Fires the standard HA hass-more-info event (opens the entity's history panel).
-  // composed:true is required to cross the shadow DOM boundary up to HA's event bus.
-  _moreInfo(entityId) {
-    if (!entityId) return;
-    this.dispatchEvent(new CustomEvent("hass-more-info", {
-      detail:   { entityId },
-      bubbles:  true,
-      composed: true,
-    }));
   }
 
   setConfig(config) {
@@ -373,15 +361,15 @@ class MythTVCard extends HTMLElement {
           </div>
           <div>
             <div class="header-title">${c.title}</div>
-            <div class="header-host" data-entity="${c.hostname_entity}">${hostname}</div>
+            <div class="header-host">${hostname}</div>
           </div>
         </div>
-        <div class="status-dot ${isOnline ? "online" : "offline"}" data-entity="${c.connected_entity}"></div>
+        <div class="status-dot ${isOnline ? "online" : "offline"}"></div>
       </div>`;
 
     // Conflict banner
     if (hasConflicts) card.innerHTML += `
-      <div class="conflict-banner" data-entity="${c.conflicts_entity}">
+      <div class="conflict-banner">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2L1 21h22L12 2zm0 3.5L20.5 19h-17L12 5.5zM11 10v4h2v-4h-2zm0 6v2h2v-2h-2z"/>
         </svg>
@@ -392,20 +380,20 @@ class MythTVCard extends HTMLElement {
     const recPct = numEncoders > 0 ? Math.round(activeCount / numEncoders * 100) : 0;
     card.innerHTML += `
       <div class="stats">
-        <div class="stat" data-entity="${c.active_count_entity}">
+        <div class="stat">
           <div class="stat-val ${isRecording ? "accent" : ""}">${activeCount}</div>
           <div class="stat-lbl">Recording</div>
           ${isRecording ? `<div class="stat-bar" style="width:${recPct}%"></div>` : ""}
         </div>
-        <div class="stat" data-entity="${c.upcoming_entity}">
+        <div class="stat">
           <div class="stat-val">${upcomingTotal}</div>
           <div class="stat-lbl">Upcoming</div>
         </div>
-        <div class="stat" data-entity="${c.encoders_entity}">
+        <div class="stat">
           <div class="stat-val ok">${numEncoders}</div>
           <div class="stat-lbl">Tuners</div>
         </div>
-        <div class="stat" data-entity="${c.recorded_entity}">
+        <div class="stat">
           <div class="stat-val">${recordedTotal}</div>
           <div class="stat-lbl">Library</div>
         </div>
@@ -537,25 +525,6 @@ class MythTVCard extends HTMLElement {
     root.querySelectorAll("[data-toggle]").forEach(el => {
       el.addEventListener("click", () => this._toggle(el.dataset.toggle));
     });
-
-    // Delegated tap-to-history listener — attached only once so it survives
-    // re-renders. Walks up from the clicked element looking for [data-entity];
-    // if found, opens the more-info / history panel for that entity.
-    // [data-toggle] section heads never carry [data-entity], so there is no
-    // conflict with the section-collapse handlers above.
-    if (!this._clickListenerAttached) {
-      this._clickListenerAttached = true;
-      root.addEventListener("click", (e) => {
-        let el = e.target;
-        while (el && el !== root) {
-          if (el.dataset && el.dataset.entity) {
-            this._moreInfo(el.dataset.entity);
-            return;
-          }
-          el = el.parentElement;
-        }
-      });
-    }
   }
 
   static getStubConfig()    { return { title: "MythTV" }; }
