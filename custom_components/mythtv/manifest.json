@@ -11,8 +11,6 @@
   "loggers": [
     "custom_components.mythtv"
   ],
-  "requirements": [
-    "aiohttp>=3.9.0"
-  ],
-  "version": "0.5.1"
+  "requirements": [],
+  "version": "0.6.0"
 }

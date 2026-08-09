@@ -1,9 +1,23 @@
 /**
- * MythTV Dashboard Card for Home Assistant  v1.0.9
+ * MythTV Dashboard Card for Home Assistant  v0.6.0
  *
  * Install: copy to <config>/www/mythtv-card.js
  * Register: Settings → Dashboards → Resources → /local/mythtv-card.js (module)
  * Use:      type: custom:mythtv-card
+ *
+ * Changelog v0.6.0
+ * ─────────────────
+ * • FIXED: Backend-supplied values (programme title/subtitle/channel,
+ *   backend hostname, encoder name, storage group names and directory
+ *   paths) are now HTML-escaped before being interpolated into innerHTML,
+ *   closing an XSS hole where guide metadata containing markup could
+ *   execute for anyone viewing the dashboard.
+ * • NEW: `mythtv-card-editor` custom element is now defined and registered,
+ *   so the Lovelace visual editor (returned by `getConfigElement()`) no
+ *   longer renders empty.
+ * • Card versioning now tracks the integration's release number
+ *   (`custom_components/mythtv/manifest.json`) instead of its own
+ *   independent 1.0.x scheme.
  *
  * Changelog v1.0.9
  * ─────────────────
@@ -37,7 +51,7 @@
  * • Changelog v1.0.7: LiveTV section, blue tuner badges, livetv_entity key.
  */
 
-const VERSION = "1.0.9";
+const VERSION = "0.6.0";
 
 /* ─── Styles ──────────────────────────────────────────────────────────────── */
 const STYLES = `
@@ -192,6 +206,20 @@ function fmtDate(s) {
 function stateVal(hass, id)      { return hass?.states?.[id]?.state ?? null; }
 function attrVal(hass, id, attr) { return hass?.states?.[id]?.attributes?.[attr] ?? null; }
 
+// Escapes any value that will be interpolated into an innerHTML template so
+// that markup coming from the MythTV backend (programme titles/subtitles,
+// channel names, hostnames, encoder names, storage group/dir names, etc.)
+// can never be parsed as HTML.
+function escapeHtml(value) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /**
  * Map a programme's rec_status to a CSS bar class.
  *
@@ -241,9 +269,9 @@ function progStatusClass(prog) {
 }
 
 function progRow(prog, cls) {
-  const title   = prog.title    || "Unknown";
-  const sub     = prog.subtitle || "";
-  const channel = (prog.channel || "").trim();
+  const title   = escapeHtml(prog.title    || "Unknown");
+  const sub     = escapeHtml(prog.subtitle || "");
+  const channel = escapeHtml((prog.channel || "").trim());
   const start   = prog.start    || prog.rec_start || "";
   const end     = prog.end      || prog.rec_end   || "";
   const isRec   = cls === "recording";
@@ -360,8 +388,8 @@ class MythTVCard extends HTMLElement {
             v-2zm13 0h2v2h-2v-2z"/></svg>
           </div>
           <div>
-            <div class="header-title">${c.title}</div>
-            <div class="header-host">${hostname}</div>
+            <div class="header-title">${escapeHtml(c.title)}</div>
+            <div class="header-host">${escapeHtml(hostname)}</div>
           </div>
         </div>
         <div class="status-dot ${isOnline ? "online" : "offline"}"></div>
@@ -410,7 +438,7 @@ class MythTVCard extends HTMLElement {
         const cls  = e.connected
           ? (isLiveTVTuner ? "livetv" : busy ? "recording" : "idle")
           : "offline";
-        enc += `<div class="enc-chip ${cls}"><span class="enc-dot"></span>${e.name || e.host || "Tuner " + (i + 1)}</div>`;
+        enc += `<div class="enc-chip ${cls}"><span class="enc-dot"></span>${escapeHtml(e.name || e.host || "Tuner " + (i + 1))}</div>`;
       });
       enc += `</div>`;
       card.innerHTML += enc;
@@ -455,9 +483,9 @@ class MythTVCard extends HTMLElement {
         <div class="prog-row">
           <div class="prog-status livetv"></div>
           <div class="prog-info">
-            <div class="prog-title">${s.title || "Live TV"}<span class="livetv-badge">LIVE</span></div>
-            ${s.subtitle ? `<div class="prog-sub">${s.subtitle}</div>` : ""}
-            <div class="prog-meta">${s.channel || s.channel_name || ""}</div>
+            <div class="prog-title">${escapeHtml(s.title || "Live TV")}<span class="livetv-badge">LIVE</span></div>
+            ${s.subtitle ? `<div class="prog-sub">${escapeHtml(s.subtitle)}</div>` : ""}
+            <div class="prog-meta">${escapeHtml(s.channel || s.channel_name || "")}</div>
           </div>
           <div class="prog-time">
             <div>${fmtDate(s.start)}</div>
@@ -504,10 +532,10 @@ class MythTVCard extends HTMLElement {
         storageHtml += `
           <div class="storage-row">
             <div class="storage-top">
-              <span class="storage-name">${sg.group || "Default"}${roFlag}</span>
+              <span class="storage-name">${escapeHtml(sg.group || "Default")}${roFlag}</span>
               <span class="storage-free">${freeGb} GB free</span>
             </div>
-            ${dirs ? `<div class="storage-dirs">${dirs}</div>` : ""}
+            ${dirs ? `<div class="storage-dirs">${escapeHtml(dirs)}</div>` : ""}
           </div>`;
       });
     } else {
@@ -533,6 +561,88 @@ class MythTVCard extends HTMLElement {
 }
 
 customElements.define("mythtv-card", MythTVCard);
+
+/* ─── Visual editor ───────────────────────────────────────────────────────── */
+// Minimal GUI editor so the Lovelace card picker's "Show Code Editor" toggle
+// isn't the only way to configure the card. Exposes the entity overrides
+// that setConfig() understands as plain text fields.
+const EDITOR_FIELDS = [
+  { key: "title",                    label: "Title" },
+  { key: "connected_entity",         label: "Connected entity" },
+  { key: "recording_entity",         label: "Recording entity" },
+  { key: "conflicts_binary_entity",  label: "Conflicts (binary) entity" },
+  { key: "conflicts_entity",         label: "Conflicts (sensor) entity" },
+  { key: "active_count_entity",      label: "Active recordings entity" },
+  { key: "upcoming_entity",          label: "Upcoming recordings entity" },
+  { key: "recorded_entity",          label: "Recorded/library entity" },
+  { key: "encoders_entity",          label: "Encoders entity" },
+  { key: "storage_entity",           label: "Storage groups entity" },
+  { key: "livetv_entity",            label: "LiveTV entity" },
+  { key: "hostname_entity",          label: "Backend hostname entity" },
+];
+
+class MythTVCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+  }
+
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) { this._hass = hass; }
+
+  _render() {
+    const root = this.shadowRoot;
+    root.innerHTML = `
+      <style>
+        :host { display:block; }
+        .row { display:flex; flex-direction:column; margin-bottom:12px; }
+        label { font-size:12px; margin-bottom:4px; color:var(--secondary-text-color,#8890a8); }
+        input { padding:8px; border-radius:4px; border:1px solid var(--divider-color,#444);
+                background:var(--card-background-color,#1a1e2e); color:var(--primary-text-color,#e8eaf2);
+                font-size:13px; }
+      </style>
+      <div class="editor"></div>`;
+    const wrap = root.querySelector(".editor");
+    EDITOR_FIELDS.forEach(({ key, label }) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const lbl = document.createElement("label");
+      lbl.textContent = label;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.dataset.key = key;
+      // Values come from the card's own config (author-controlled YAML/UI
+      // input), not the MythTV backend, so no escaping is needed here.
+      input.value = this._config[key] ?? "";
+      input.addEventListener("change", (ev) => this._valueChanged(key, ev.target.value));
+      row.appendChild(lbl);
+      row.appendChild(input);
+      wrap.appendChild(row);
+    });
+  }
+
+  _valueChanged(key, value) {
+    const newConfig = { ...this._config };
+    if (value === "") {
+      delete newConfig[key];
+    } else {
+      newConfig[key] = value;
+    }
+    this._config = newConfig;
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config: newConfig },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+}
+
+customElements.define("mythtv-card-editor", MythTVCardEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({

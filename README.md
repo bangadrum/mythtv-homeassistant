@@ -216,6 +216,26 @@ See [info.md](info.md) for the complete recording status code table, the active 
 
 ## Changelog
 
+### 0.6.0
+- **Security fix: unescaped backend data in the Lovelace card.** `mythtv-card.js`
+  built its markup with template literals and assigned it via `innerHTML`,
+  interpolating values that come straight from the MythTV backend
+  (programme title/subtitle/channel, backend hostname, encoder name,
+  storage group names and directory paths) with no escaping. Guide
+  metadata or backend strings containing markup could execute for anyone
+  viewing the dashboard. All backend-derived values are now passed through
+  a new `escapeHtml()` helper before interpolation.
+- **Fixed: `manifest.json` listed `aiohttp>=3.9.0` in `requirements`.**
+  `aiohttp` ships with Home Assistant core, so pinning it in a custom
+  integration can conflict with core's own pinning. The requirement has
+  been removed.
+- **Fixed: Lovelace visual editor rendered empty.** `getConfigElement()`
+  returned a `mythtv-card-editor` element that was never defined/registered.
+  A `mythtv-card-editor` custom element is now implemented and registered,
+  exposing the card's title and entity-override fields in the GUI editor.
+- The card's own version number now tracks the integration's release
+  number instead of an independent `1.0.x` scheme.
+
 ### 0.5.1
 - **Fixed: "Upcoming Recordings" could report 0 even with recordings scheduled.**
   `Dvr/GetUpcomingList`'s `Count` parameter limits the *raw* list the backend
